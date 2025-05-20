@@ -8,3 +8,4 @@ maths-accelerator/overlay/base_generated.tcl
 *.dmp
 /maths-accelerator/overlay/.Xil
 *.out
+node_modules
