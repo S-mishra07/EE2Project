@@ -27,26 +27,44 @@ function App() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-100 p-6">
-      <h1 className="text-2xl font-bold mb-4 text-center">secret power energy tracker</h1>
-      <div className="space-y-4 max-w-xl mx-auto">
+    <div className="min-h-screen bg-gray-100 p-8">
+      <h1 className="text-4xl font-bold mb-8 text-center">Secret Power Energy Tracker</h1>
+      <div className="space-y-6 max-w-4xl mx-auto">
         {jobs.map((job) => (
           <div
             key={job._id}
-            className="bg-white p-4 rounded shadow flex justify-between items-center"
+            className="bg-white p-6 rounded-lg shadow-lg"
           >
-            <div>
-              <h2 className="text-lg font-semibold">{"the energy input is : " + job.Energy_in || "Untitled Job"}</h2>
-              <h2 className="text-sm text-gray-500">{"the energy output is : " + job.Energy_out || "Unknown Company"}</h2>
-              <h2 className="text-sm text-gray-500">{"the economics are : " + job.Economics || "Unknown Company"}</h2>
-              <h2 className="text-sm text-gray-500">{"the internal variables are : " + job.Internal_variables || "Unknown Company"}</h2>
+            <div className="grid grid-cols-1 gap-4 mb-6">
+              <div className="border-2 border-gray-300 p-4 rounded-lg">
+                <h2 className="text-2xl font-bold mb-2">Energy Input</h2>
+                <p className="text-xl text-gray-800">{job.Energy_in || "Not specified"}</p>
+              </div>
+              
+              <div className="border-2 border-gray-300 p-4 rounded-lg">
+                <h2 className="text-2xl font-bold mb-2">Energy Output</h2>
+                <p className="text-xl text-gray-800">{job.Energy_out || "Not specified"}</p>
+              </div>
+              
+              <div className="border-2 border-gray-300 p-4 rounded-lg">
+                <h2 className="text-2xl font-bold mb-2">Economics</h2>
+                <p className="text-xl text-gray-800">{job.Economics || "Not specified"}</p>
+              </div>
+              
+              <div className="border-2 border-gray-300 p-4 rounded-lg">
+                <h2 className="text-2xl font-bold mb-2">Internal Variables</h2>
+                <p className="text-xl text-gray-800">{job.Internal_variables || "Not specified"}</p>
+              </div>
             </div>
-            <button
-              onClick={() => deleteJob(job._id)}
-              className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded"
-            >
-              Delete
-            </button>
+            
+            <div className="flex justify-end">
+              <button
+                onClick={() => fetchJobs()}
+                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-lg font-semibold"
+              >
+                Refresh
+              </button>
+            </div>
           </div>
         ))}
       </div>
