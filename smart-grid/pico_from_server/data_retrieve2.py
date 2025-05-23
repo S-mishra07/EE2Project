@@ -1,4 +1,11 @@
 import urequests
+import ujson
+
+ticks = []
+sun  = []
+buy_price = []
+sell_price = []
+demand = []
 
 print("Sun intensity")
 
@@ -8,8 +15,13 @@ response1 = urequests.get(url_sun)
 
 if response1.status_code == 200:
     data1 = response1.json()
-    for key in data1:
-        print(f"{key}: {data1[key]}")
+    print(f"tick: {data1['tick']}")
+    print(f"sun: {data1['sun']}")
+    
+    print(ujson.dumps(data1))
+    
+    ticks.append(data1['tick'])
+    sun.append(data1['sun'])
 else:
     print("Error:", response1.status_code)
 
@@ -23,8 +35,14 @@ response2 = urequests.get(url_price)
 
 if response2.status_code == 200:
     data2 = response2.json()
-    for key in data2:
-        print(f"{key}: {data2[key]}")
+    print(f"tick: {data2['tick']}")
+    print(f"day: {data2['day']}")
+    print(f"buy_price: {data2['buy_price']}")
+    print(f"sell_price: {data2['sell_price']}")
+    
+    buy_price.append(data2['buy_price'])
+    sell_price.append(data2['sell_price'])
+
 else:
     print("Error:", response2.status_code)
 
@@ -38,8 +56,12 @@ response3 = urequests.get(url_demand)
 
 if response3.status_code == 200:
     data3 = response3.json()
-    for key in data3:
-        print(f"{key}: {data3[key]}")
+    
+    print(f"tick: {data3['tick']}")
+    print(f"day: {data3['day']}")
+    print(f"demand: {data3['demand']}")
+    
+    demand.append(data3['demand'])
 else:
     print("Error:", response3.status_code)
 
@@ -75,3 +97,6 @@ else:
     print("Error:", response5.status_code)
 
 response5.close()
+
+        
+     
