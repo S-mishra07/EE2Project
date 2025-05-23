@@ -6,7 +6,7 @@ from pymongo import MongoClient
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-# MongoDB Setup
+
 MONGO_URI = (
     "mongodb+srv://akarshgopalam:bharadwaj@smart-grid.wnctwen.mongodb.net/"
     "test?retryWrites=true&w=majority"
@@ -22,34 +22,32 @@ mongo_client.admin.command("ping")
 db = mongo_client["test"]
 combined_collection = db["combined_ticks"]
 
-# Buffer for combining messages by tick
+
 buffer = defaultdict(dict)
 last_received = defaultdict(datetime.now)
 
 def process_complete_tick(tick):
-    """Process and store a complete tick when all components are available"""
     combined_doc = {
         "tick": tick,
         "timestamp": datetime.now(),
-        **buffer[tick]  # Include all buffered data
+        **buffer[tick] 
     }
     try:
         combined_collection.insert_one(combined_doc)
-        print(f"✓ Combined tick {tick}: {combined_doc}")
+        print(f"Combined tick {tick}: {combined_doc}")
         del buffer[tick]
         del last_received[tick]
     except Exception as exc:
-        print(f"✗ Error storing combined tick {tick}: {exc}")
+        print(f"Error storing combined tick {tick}: {exc}")
 
 def cleanup_stale_ticks():
-    """Remove incomplete ticks older than 5 seconds"""
     stale_ticks = [
         t for t, ts in last_received.items()
         if datetime.now() - ts > timedelta(seconds=5)
     ]
     for tick in stale_ticks:
         if tick in buffer:
-            print(f"⚠ Clearing incomplete tick {tick} (timed out)")
+            print(f"Clearing incomplete tick {tick} (timed out)")
             del buffer[tick]
             del last_received[tick]
 
@@ -68,17 +66,17 @@ def on_message(client, userdata, msg):
             
             if msg.topic.endswith("sun"):
                 buffer[tick]["sun"] = data.get("sun")
-                print(f"☀️ Sun data received for tick {tick}")
+                print(f"Sun data received for tick {tick}")
             elif msg.topic.endswith("price"):
                 buffer[tick]["price"] = {
                     "buy": data.get("buy_price"),
                     "sell": data.get("sell_price"),
                     "day": data.get("day")
                 }
-                print(f"💰 Price data received for tick {tick}")
+                print(f" Price data received for tick {tick}")
             elif msg.topic.endswith("demand"):
                 buffer[tick]["demand"] = data.get("demand")
-                print(f"📊 Demand data received for tick {tick}")
+                print(f"Demand data received for tick {tick}")
             
             
             if all(k in buffer[tick] for k in ["sun", "price", "demand"]):
@@ -88,7 +86,7 @@ def on_message(client, userdata, msg):
             cleanup_stale_ticks()
 
     except Exception as exc:
-        print(f"✗ Error processing message: {exc}")
+        print(f"Error processing message: {exc}")
 
 
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, protocol=mqtt.MQTTv311)
