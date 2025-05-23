@@ -1,92 +1,93 @@
-import { useEffect, useState } from "react";
-import axios from "axios";
-import { RefreshCw, Zap, TrendingUp, DollarSign, Settings } from "lucide-react";
+import { useEffect, useState } from 'react';
+import { Sun, DollarSign, Activity } from 'lucide-react';
 
-function App() {
-  const [jobs, setJobs] = useState([]);
-
-  const fetchJobs = async () => {
-    try {
-      const res = await axios.get("http://localhost:3000/find");
-      setJobs(res.data.data);
-    } catch (err) {
-      console.error("Failed to fetch jobs:", err);
-    }
-  };
-
-  const deleteJob = async (id) => {
-    try {
-      await axios.delete(`http://localhost:3000/find/${id}`);
-      setJobs((prev) => prev.filter((job) => job._id !== id));
-    } catch (err) {
-      console.error("Failed to delete job:", err);
-    }
-  };
+export default function App() {
+  const [currentData, setCurrentData] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchJobs();
+    
+    const fetchLatest = async () => {
+      try {
+        const res = await fetch('http://localhost:3000/latest');
+        const data = await res.json();
+        setCurrentData(data);
+        setLoading(false);
+      } catch (error) {
+        console.error('Initial fetch error:', error);
+      }
+    };
+    fetchLatest();
+
+    
+    const ws = new WebSocket('ws://localhost:3000');
+    
+    ws.onmessage = (event) => {
+      const newData = JSON.parse(event.data);
+      setCurrentData(newData);
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+
+    return () => ws.close();
   }, []);
 
-  return (
-    <div className="min-h-screen bg-gray-50 py-10 px-4 sm:px-8">
-      <div className="max-w-5xl mx-auto">
-        <h1 className="text-4xl font-extrabold text-center text-gray-800 mb-6">
-          ⚡ Secret Power Energy Tracker
-        </h1>
+  if (loading) return <div className="p-8">Loading initial data...</div>;
+  if (!currentData) return <div className="p-8">No data available</div>;
 
-        <div className="flex justify-center mb-8">
-          <button
-            onClick={fetchJobs}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg shadow transition duration-200"
-          >
-            <RefreshCw className="w-5 h-5" />
-            Refresh Data
-          </button>
+  return (
+    <div className="min-h-screen bg-gray-50 p-8">
+      <h1 className="text-3xl font-bold mb-8">Smart Grid Dashboard</h1>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <DataCard
+          icon={<Sun className="text-yellow-500" />}
+          title="Solar Energy"
+          value={currentData.sun}
+          unit="kW"
+        />
+        <DataCard
+          icon={<DollarSign className="text-green-500" />}
+          title="Buy Price"
+          value={currentData.price.buy}
+          unit="$"
+        />
+        <DataCard
+          icon={<DollarSign className="text-blue-500" />}
+          title="Sell Price"
+          value={currentData.price.sell}
+          unit="$"
+        />
+        <DataCard
+          icon={<Activity className="text-purple-500" />}
+          title="Demand"
+          value={currentData.demand.toFixed(2)}
+          unit="kW"
+        />
+        <div className="bg-white p-6 rounded-xl shadow-md">
+          <h3 className="text-lg font-semibold mb-2">Current Tick</h3>
+          <p className="text-2xl font-bold">{currentData.tick}</p>
+          <p className="text-sm text-gray-500 mt-2">
+            Updated: {new Date(currentData.timestamp).toLocaleTimeString()}
+          </p>
         </div>
-
-        {jobs.length === 0 ? (
-          <p className="text-center text-gray-500 text-lg">No jobs found. Try refreshing.</p>
-        ) : (
-          <div className="space-y-8">
-            {jobs.map((job) => (
-              <div
-                key={job._id}
-                className="bg-white p-6 rounded-2xl shadow-xl border border-gray-200 transition hover:shadow-2xl"
-              >
-                <div className="grid sm:grid-cols-2 gap-6 mb-6">
-                  <InfoCard icon={<Zap className="text-yellow-500" />} title="Energy Input" value={job.Energy_in} />
-                  <InfoCard icon={<TrendingUp className="text-green-500" />} title="Energy Output" value={job.Energy_out} />
-                  <InfoCard icon={<DollarSign className="text-blue-500" />} title="Economics" value={job.Economics} />
-                  <InfoCard icon={<Settings className="text-purple-500" />} title="Internal Variables" value={job.Internal_variables} />
-                </div>
-
-                <div className="flex justify-end">
-                  <button
-                    onClick={() => deleteJob(job._id)}
-                    className="text-red-600 hover:text-red-800 font-semibold transition"
-                  >
-                    Delete Entry
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );
 }
 
-function InfoCard({ icon, title, value }) {
+function DataCard({ icon, title, value, unit }) {
   return (
-    <div className="p-4 bg-gray-100 rounded-xl border border-gray-300">
-      <div className="flex items-center gap-3 mb-2">
+    <div className="bg-white p-6 rounded-xl shadow-md">
+      <div className="flex items-center gap-3 mb-4">
         {icon}
-        <h2 className="text-lg font-bold text-gray-700">{title}</h2>
+        <h3 className="text-lg font-semibold">{title}</h3>
       </div>
-      <p className="text-gray-800 text-md">{value || "Not specified"}</p>
+      <p className="text-2xl font-bold">
+        {value} {unit && <span className="text-sm text-gray-500">{unit}</span>}
+      </p>
     </div>
   );
 }
-
-export default App;

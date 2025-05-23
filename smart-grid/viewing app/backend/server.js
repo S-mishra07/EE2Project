@@ -1,63 +1,43 @@
 import express from 'express';
-import cors from 'cors';
 import mongoose from 'mongoose';
+import cors from 'cors';
 import { mongodburl } from './config.js';
-import job from "./models/jobmodel.js";
+import Job from './models/jobmodel.js';
 
 const app = express();
-
-
 app.use(cors());
-app.use(express.json());
 
-app.get("/find", async (req, res) => {
-    try {
-        const jobs = await job.find({});
-        res.status(200).json({ success: true, data: jobs });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
 
-app.delete("/find/:id", async (req, res) => {
-    const { id } = req.params;
+import { WebSocketServer } from 'ws';
+const server = app.listen(3000, () => console.log('Server running on port 3000'));
+const wss = new WebSocketServer({ server });
 
-    try {
-        await job.findByIdAndDelete(id);
-        return res.status(200).json({ success: true, message: "Your job profile has been deleted" });
-    } catch (error) {
-        return res.status(500).json({ success: false, message: "Your job profile has not been deleted" });
-    }
-});
 
-app.post("/find", async (req, res) => {
-    const jobData = req.body;
-
-    if (!jobData.Energy_in || !jobData.Energy_out || !jobData.Economics || !jobData.Internal_variables) {
-        return res.status(404).json({ success: false, message: "You have not entered all the fields" });
-    }
-
-    const newjob = new job(jobData);
-
-    try { 
-        await newjob.save();
-        return res.status(200).json({ success: true, message: "You have updated your job listing" });
-    }
-    catch (error) {
-        return res.status(404).json({ success: false, message: "There has been an issue" }); 
-    }
-});
-
+let changeStream;
 mongoose.connect(mongodburl)
   .then(() => {
-    console.log("Connected to MongoDB");
-    app.listen(3000, () => {
-      console.log("Server running on port 3000");
+    console.log('Connected to MongoDB');
+    const collection = mongoose.connection.db.collection('combined_ticks');
+    changeStream = collection.watch([], { fullDocument: 'updateLookup' });
+    
+    changeStream.on('change', (change) => {
+      if (change.operationType === 'insert') {
+        const newData = change.fullDocument;
+        wss.clients.forEach(client => {
+          if (client.readyState === 1) { // 1 = OPEN
+            client.send(JSON.stringify(newData));
+          }
+        });
+      }
     });
-  })
-  .catch(error => {
-    console.error("Database connection error:", error);
-    process.exit(1);
   });
-export default app;
+
+
+app.get('/latest', async (req, res) => {
+  try {
+    const latest = await Job.findOne().sort({ $natural: -1 });
+    res.json(latest || null);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
