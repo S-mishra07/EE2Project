@@ -4,12 +4,16 @@ import signal
 import requests
 import paho.mqtt.client as mqtt
 
-TOPIC   = "livedatafromserver"
-ENDPOINT = "https://icelec50015.azurewebsites.net/sun"
+SOURCES = [
+    ("sun",   "https://icelec50015.azurewebsites.net/sun"),
+    ("price",    "https://icelec50015.azurewebsites.net/price"),
+    ("demand", "https://icelec50015.azurewebsites.net/demand"),
+]
+POLL_SECONDS = 5
 
 mqtt_client = mqtt.Client(protocol=mqtt.MQTTv311)
 mqtt_client.connect("localhost", 1883, keepalive=60)
-mqtt_client.loop_start()                     
+mqtt_client.loop_start()
 
 def graceful_exit(*_):
     mqtt_client.loop_stop()
@@ -19,15 +23,16 @@ def graceful_exit(*_):
 signal.signal(signal.SIGINT, graceful_exit)
 
 while True:
-    try:
-        resp = requests.get(ENDPOINT, timeout=10)
-        resp.raise_for_status()
-        payload = resp.json()
+    for topic, url in SOURCES:
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            payload = resp.json()
 
-        mqtt_client.publish(TOPIC, json.dumps(payload), qos=0)
-        print("→ published:", payload)
+            mqtt_client.publish(topic, json.dumps(payload), qos=0)
+            print(f"→ published to {topic}: {payload}")
 
-    except Exception as exc:
-        print("✗ publish error:", exc)
+        except Exception as exc:
+            print(f"✗ fetch/publish error for {url}:", exc)
 
-    time.sleep(5)
+    time.sleep(POLL_SECONDS)
