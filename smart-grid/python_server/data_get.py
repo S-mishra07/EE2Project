@@ -1,45 +1,35 @@
-import json
-import time
-import signal
-import requests
+# file: publisher.py
+import time, json, requests
 import paho.mqtt.client as mqtt
 
-SOURCES = [
-    ("sun",   "https://icelec50015.azurewebsites.net/sun"),
-    ("price",    "https://icelec50015.azurewebsites.net/price"),
-    ("demand", "https://icelec50015.azurewebsites.net/demand"),
-    ("deferrable", "https://icelec50015.azurewebsites.net/deferables"),
-    ("yesterday", "https://icelec50015.azurewebsites.net/yesterday")
-]
-POLL_SECONDS = 5
+URLS = {
+    "sun": "https://icelec50015.azurewebsites.net/sun",
+    "prices": "https://icelec50015.azurewebsites.net/price",
+    "demand": "https://icelec50015.azurewebsites.net/demand",
+    "deferrable": "https://icelec50015.azurewebsites.net/deferables",
+    "yesterday": "https://icelec50015.azurewebsites.net/yesterday",
+}
 
-mqtt_client = mqtt.Client(protocol=mqtt.MQTTv311)
-mqtt_client.connect("localhost", 1883, keepalive=60)
-mqtt_client.loop_start()
+BROKER_HOST = "localhost"
+BROKER_PORT = 1883
+CLIENT_ID   = "web_publisher"
+POLL_PERIOD = 5
 
-def graceful_exit(*_):
-    mqtt_client.loop_stop()
-    mqtt_client.disconnect()
-    exit()
+mqttc = mqtt.Client(client_id=CLIENT_ID, protocol=mqtt.MQTTv311)
+mqttc.connect(BROKER_HOST, BROKER_PORT, keepalive=60)
 
-signal.signal(signal.SIGINT, graceful_exit)
+def poll_and_publish():
+    for topic, url in URLS.items():
+        try:
+            r = requests.get(url, timeout=5)
+            r.raise_for_status()
+            payload = r.text.strip()
+            topic   = f"{topic}"      
+            mqttc.publish(topic, payload, qos=1, retain=False)
+            print(f"{topic} - {payload}")
+        except Exception as e:
+            print(f"{topic}: {e}")
 
 while True:
-    for topic, url in SOURCES:
-        try:
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-            payload = resp.json()
-
-            if isinstance(payload, list):
-                for item in payload:
-                    mqtt_client.publish(topic, json.dumps(item), qos=0)
-                    print(f"published one {topic} item:", item)
-            else:
-                mqtt_client.publish(topic, json.dumps(payload), qos=0)
-                print(f"published {topic}:", payload)
-
-        except Exception as exc:
-            print(f"fetch/publish error for {url}:", exc)
-
-    time.sleep(POLL_SECONDS)
+    poll_and_publish()
+    time.sleep(POLL_PERIOD)
