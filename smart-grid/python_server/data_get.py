@@ -8,6 +8,8 @@ SOURCES = [
     ("sun",   "https://icelec50015.azurewebsites.net/sun"),
     ("price",    "https://icelec50015.azurewebsites.net/price"),
     ("demand", "https://icelec50015.azurewebsites.net/demand"),
+    ("deferrable", "https://icelec50015.azurewebsites.net/deferables"),
+    ("yesterday", "https://icelec50015.azurewebsites.net/yesterday")
 ]
 POLL_SECONDS = 5
 
@@ -29,10 +31,15 @@ while True:
             resp.raise_for_status()
             payload = resp.json()
 
-            mqtt_client.publish(topic, json.dumps(payload), qos=0)
-            print(f"→ published to {topic}: {payload}")
+            if isinstance(payload, list):
+                for item in payload:
+                    mqtt_client.publish(topic, json.dumps(item), qos=0)
+                    print(f"published one {topic} item:", item)
+            else:
+                mqtt_client.publish(topic, json.dumps(payload), qos=0)
+                print(f"published {topic}:", payload)
 
         except Exception as exc:
-            print(f"✗ fetch/publish error for {url}:", exc)
+            print(f"fetch/publish error for {url}:", exc)
 
     time.sleep(POLL_SECONDS)

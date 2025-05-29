@@ -6,6 +6,8 @@ from pymongo import MongoClient
 from collections import defaultdict
 from datetime import datetime, timedelta
 
+latest_deferrable = None
+latest_yesterday = None
 
 MONGO_URI = (
     "mongodb+srv://akarshgopalam:bharadwaj@smart-grid.wnctwen.mongodb.net/"
@@ -56,37 +58,56 @@ def on_connect(client, userdata, flags, rc, properties=None):
     client.subscribe("#")
 
 def on_message(client, userdata, msg):
+    global latest_deferrable, latest_yesterday
     try:
         data = json.loads(msg.payload.decode())
+        topic = msg.topic
+
+        # Handle deferrable and yesterday separately
+        if topic.endswith("deferrable"):
+            latest_deferrable = data.get("deferrable") or data  # In case it's just a list/dict
+            print("✓ deferrable data updated")
+            return
+
+        if topic.endswith("yesterday"):
+            latest_yesterday = data.get("yesterday") or data
+            print("✓ yesterday data updated")
+            return
+
         tick = data.get("tick")
-        
-        if tick is not None:
-            last_received[tick] = datetime.now()
-            
-            
-            if msg.topic.endswith("sun"):
-                buffer[tick]["sun"] = data.get("sun")
-                print(f"Sun data received for tick {tick}")
-            elif msg.topic.endswith("price"):
-                buffer[tick]["price"] = {
-                    "buy": data.get("buy_price"),
-                    "sell": data.get("sell_price"),
-                    "day": data.get("day")
-                }
-                print(f" Price data received for tick {tick}")
-            elif msg.topic.endswith("demand"):
-                buffer[tick]["demand"] = data.get("demand")
-                print(f"Demand data received for tick {tick}")
-            
-            
-            if all(k in buffer[tick] for k in ["sun", "price", "demand"]):
-                process_complete_tick(tick)
-            
-            
-            cleanup_stale_ticks()
+        if not tick:
+            print("✗ Missing tick — skipping message:", data)
+            return
+
+        last_received[tick] = datetime.now()
+
+        if topic.endswith("sun"):
+            buffer[tick]["sun"] = data.get("sun")
+            print(f"✓ Sun data received for tick {tick}")
+        elif topic.endswith("price"):
+            buffer[tick]["price"] = {
+                "buy": data.get("buy_price"),
+                "sell": data.get("sell_price"),
+                "day": data.get("day")
+            }
+            print(f"✓ Price data received for tick {tick}")
+        elif topic.endswith("demand"):
+            buffer[tick]["demand"] = data.get("demand")
+            print(f"✓ Demand data received for tick {tick}")
+
+        if latest_deferrable is not None:
+            buffer[tick]["deferrable"] = latest_deferrable
+        if latest_yesterday is not None:
+            buffer[tick]["yesterday"] = latest_yesterday
+
+        if all(k in buffer[tick] for k in ["sun", "price", "demand", "deferrable", "yesterday"]):
+            process_complete_tick(tick)
+
+        cleanup_stale_ticks()
 
     except Exception as exc:
-        print(f"Error processing message: {exc}")
+        print(f"✗ Error processing message on topic {msg.topic}: {exc}")
+
 
 
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, protocol=mqtt.MQTTv311)
