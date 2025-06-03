@@ -10,29 +10,29 @@ const schema = mongoose.Schema({
         required: true
     },
     sun: {
-        type: Number,
+        type: Map,
+        of: Number,
         required: true
     },
-    price: {
-        buy: {
-            type: Number,
-            required: true
-        },
-        sell: {
-            type: Number,
-            required: true
-        },
-        day: {
-            type: Number,
-            required: true
-        }
+    prices: {
+        type: Map,
+        of: Number,
+        required: true
     },
     demand: {
-        type: Number,
+        type: Map,
+        of: Number,
+        required: true
+    },
+    deferrable: {
+        type: Array,
+        required: true
+    },
+    yesterday: {
+        type: Array,
         required: true
     }
 });
-
 
 const Job = mongoose.model('Job', schema, 'combined_ticks');
 export default Job;

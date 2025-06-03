@@ -1,4 +1,3 @@
-# publisher.py
 import time, json, requests
 import paho.mqtt.client as mqtt
 
