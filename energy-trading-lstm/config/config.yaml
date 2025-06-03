@@ -1,0 +1,30 @@
+model:
+  type: LSTM
+  input_dim: 10
+  hidden_dim: 64
+  num_layers: 2
+  dropout: 0.2
+  output_dim: 3  # Buy, Sell, Hold
+
+training:
+  batch_size: 32
+  num_epochs: 100
+  learning_rate: 0.001
+  patience: 10
+
+data:
+  historical_data_path: "data/historical_data.csv"
+  feature_columns: 
+    - avg_buy_price
+    - avg_sell_price
+    - demand
+    - sunlight
+  target_column: "action"  # Action to take: Buy, Sell, Hold
+
+api:
+  host: "0.0.0.0"
+  port: 5000
+
+logging:
+  level: INFO
+  log_file: "logs/trading.log"
