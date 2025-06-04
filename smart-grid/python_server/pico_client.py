@@ -4,7 +4,7 @@ import time
 from umqtt.simple import MQTTClient
 
 client_id = "pico" # ubinascii.hexlify(machine.unique_id()) to allocate id
-broker = "192.168.135.60" # put your ip address in here as for now mosquitto is running locally
+broker = "18.210.146.176" # put your ip address in here as for now mosquitto is running locally
 port = 1883
 topic_from_server = b"server_data" # b has to be there as micropython requres byte string for mqtt topics
 topic_to_server = b"pico_data"

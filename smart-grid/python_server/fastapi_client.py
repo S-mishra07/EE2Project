@@ -3,7 +3,7 @@ import threading
 import time
 
 stop_event = threading.Event()
-broker = "192.168.135.60"
+broker = "18.210.146.176"
 port = 1883
 client_id   = "fastapi"
 topic_from_pico = "pico_data"
