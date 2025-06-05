@@ -3,20 +3,22 @@ import threading
 import time
 from pymongo import MongoClient
 from datetime import datetime
+import json
 
 
-broker = "18.210.146.176"
+broker = "192.168.135.60" # change this to AWS ip
 port = 1883
 client_id = "fastapi"
 topic_from_pico = "pico_data"
 topic_to_pico = "server_data"
+
 payload = "hello from server"
 
 
-mongo_url = "mongodb+srv://akarshgopalam:bharadwaj@smart-grid.wnctwen.mongodb.net/test?retryWrites=true&w=majority&appName=smart-grid"
-client = MongoClient(mongo_url)
-db = client["test_pico"]
-collection = db["pico_messages"]
+#mongo_url = "mongodb+srv://akarshgopalam:bharadwaj@smart-grid.wnctwen.mongodb.net/test?retryWrites=true&w=majority&appName=smart-grid"
+#client = MongoClient(mongo_url)
+#db = client["test_pico"]
+#collection = db["pico_messages"]
 
 
 def on_connect(client, *_):
@@ -24,20 +26,20 @@ def on_connect(client, *_):
     print("Connected to MQTT broker")
 
 def on_message(client, userdata, msg):
-    message = msg.payload.decode()
+    message = json.loads(msg.payload.decode())
     print(f" from pico: {message}")
     
 
-    doc = {
-        "message": message,
-        "topic": msg.topic,
-        "timestamp": datetime.utcnow()
-    }
-    try:
-        result = collection.insert_one(doc)
-        print(f" Saved to MongoDB with _id: {result.inserted_id}")
-    except Exception as e:
-        print(f"MongoDB insert error: {e}")
+    #doc = {
+     #   "message": message,
+      #  "topic": msg.topic,
+       # "timestamp": datetime.utcnow()
+    #}
+   # try:
+    #    result = collection.insert_one(doc)
+     #   print(f" Saved to MongoDB with _id: {result.inserted_id}")
+    #except Exception as e:
+     #   print(f"MongoDB insert error: {e}")
 
 
 mqttc = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311)
