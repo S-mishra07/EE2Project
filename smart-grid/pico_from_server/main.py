@@ -37,9 +37,19 @@ port = 1883
 topic_from_server = b"server_data" # b has to be there as micropython requres byte string for mqtt topics
 topic_to_server = b"pico_data" # make sure to allocate unique topic
 
+demand_value = 0
+TARGET_P_W = 0.5
+
 def on_message(topic, msg):
+    global TARGET_P_W, demand_value
     message = json.loads(msg.decode())
-    print(f"from server: {message}")
+    print(f"from server: {message}")#
+    demand_value = message["demand"]["demand"]
+    TARGET_P_W = demand_value/4
+    pid.setpoint = TARGET_P_W
+    print(demand_value)
+    print(TARGET_P_W)
+    
     # need to do something with this
     
 mqttc = MQTTClient(client_id, broker)
@@ -55,9 +65,6 @@ VREF        = 3.3
 CAL         = 1.026
 DIV_RATIO   = 12490 / 2490
 RSENSE      = 1.02
-
-TARGET_P_W  = 0.7                      # Adjust to safe power level
-SETPOINT_P  = TARGET_P_W
 
 ALPHA       = 0.1                      # Smoothing factor for EMA filter
 
@@ -75,7 +82,7 @@ pwm_en   = Pin(1, Pin.OUT)
 # ────────────────────────────────
 # PID controller
 # ────────────────────────────────
-pid = PID(Kp=0.3, Ki=1.5, Kd=0.05, setpoint=SETPOINT_P, scale='ms')
+pid = PID(Kp=0.3, Ki=1.5, Kd=0.05, setpoint=TARGET_P_W, scale='ms')
 
 def saturate(raw_duty):
     return max(100, min(62_500, raw_duty))
@@ -121,7 +128,7 @@ while True:
     # Debug print
     counter += 1
     if counter >= 1000:
-       # print(f"Vin    = {vin_filt:0.3f} V")
+        #print(f"Vin    = {vin_filt:0.3f} V")
         #print(f"Vout   = {vout_filt:0.3f} V")
         #print(f"Vsense = {vret_filt:0.3f} V")
         #print(f"Iout = {isense:0.3f} A")
