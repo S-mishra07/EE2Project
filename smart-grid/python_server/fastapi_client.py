@@ -4,21 +4,23 @@ import time
 from pymongo import MongoClient
 from datetime import datetime
 import json
+from bson import ObjectId
 
 
 broker = "192.168.135.60" # change this to AWS ip
 port = 1883
 client_id = "fastapi"
 topic_from_pico = "pico_data"
-topic_to_pico = "server_data"
+topic_to_pico = "server_data" # has to be same on the pico side
 
-payload = "hello from server"
+mongo_url = "mongodb+srv://akarshgopalam:bharadwaj@smart-grid.wnctwen.mongodb.net/test?retryWrites=true&w=majority&appName=smart-grid"
+client_to_pico = MongoClient(mongo_url)
+client_from_pico = MongoClient(mongo_url)
+db_from_pico = client_from_pico["test_pico"]
+collection_from_pico = db_from_pico["pico_messages"]
+db_to_pico = client_to_pico["test"]
+collection_to_pico = db_to_pico["combined_ticks"]
 
-
-#mongo_url = "mongodb+srv://akarshgopalam:bharadwaj@smart-grid.wnctwen.mongodb.net/test?retryWrites=true&w=majority&appName=smart-grid"
-#client = MongoClient(mongo_url)
-#db = client["test_pico"]
-#collection = db["pico_messages"]
 
 
 def on_connect(client, *_):
@@ -46,12 +48,12 @@ mqttc = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311)
 mqttc.on_connect = on_connect
 mqttc.on_message = on_message
 mqttc.connect(broker, port, keepalive=60)
-
-
 stop_event = threading.Event()
 
 def publish_to_pico():
     while not stop_event.is_set():
+        data = collection_to_pico.find_one(sort=[("_id", -1)], projection={"tick": 1, "demand": 1, "_id": 0})
+        payload = json.dumps(data)
         mqttc.publish(topic_to_pico, payload)
         print(f"sent to pico: {payload}")
         time.sleep(5)

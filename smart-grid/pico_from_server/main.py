@@ -38,7 +38,8 @@ topic_from_server = b"server_data" # b has to be there as micropython requres by
 topic_to_server = b"pico_data" # make sure to allocate unique topic
 
 def on_message(topic, msg):
-    print(f"from server: {msg.decode()}")
+    message = json.loads(msg.decode())
+    print(f"from server: {message}")
     # need to do something with this
     
 mqttc = MQTTClient(client_id, broker)
@@ -120,12 +121,12 @@ while True:
     # Debug print
     counter += 1
     if counter >= 1000:
-        print(f"Vin    = {vin_filt:0.3f} V")
-        print(f"Vout   = {vout_filt:0.3f} V")
-        print(f"Vsense = {vret_filt:0.3f} V")
-        print(f"Iout = {isense:0.3f} A")
-        print(f"Power  = {power:0.3f} W")
-        print(f"Duty   = {prev_duty}")
+       # print(f"Vin    = {vin_filt:0.3f} V")
+        #print(f"Vout   = {vout_filt:0.3f} V")
+        #print(f"Vsense = {vret_filt:0.3f} V")
+        #print(f"Iout = {isense:0.3f} A")
+        #print(f"Power  = {power:0.3f} W")
+        #print(f"Duty   = {prev_duty}")
         counter = 0
 
     data = { "Vin": f"{vin_filt:0.3f}",

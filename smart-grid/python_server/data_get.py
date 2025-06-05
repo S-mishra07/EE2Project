@@ -1,40 +1,106 @@
-import time, json, requests
-import paho.mqtt.client as mqtt
+import time
+import requests
+from collections import defaultdict
+from pymongo import MongoClient
 
+# MongoDB Configuration
+MONGO_URI = "mongodb+srv://akarshgopalam:bharadwaj@smart-grid.wnctwen.mongodb.net/test?retryWrites=true&w=majority"
+DB_NAME = "test"
+COLLECTION = "combined_ticks"
+
+# API Endpoints
 URLS = {
-    "sun":        "https://icelec50015.azurewebsites.net/sun",
-    "prices":     "https://icelec50015.azurewebsites.net/price",
-    "demand":     "https://icelec50015.azurewebsites.net/demand",
+    "sun": "https://icelec50015.azurewebsites.net/sun",
+    "prices": "https://icelec50015.azurewebsites.net/price",
+    "demand": "https://icelec50015.azurewebsites.net/demand",
     "deferrable": "https://icelec50015.azurewebsites.net/deferables",
-    "yesterday":  "https://icelec50015.azurewebsites.net/yesterday",
+    "yesterday": "https://icelec50015.azurewebsites.net/yesterday",
 }
 
-BROKER_HOST = "localhost"
-BROKER_PORT = 1883
-CLIENT_ID   = "web_publisher"
-POLL_PERIOD = 4       
+POLL_PERIOD = 4  # seconds
 
-mqttc = mqtt.Client(client_id=CLIENT_ID, protocol=mqtt.MQTTv311)
-mqttc.connect(BROKER_HOST, BROKER_PORT, keepalive=60)
-mqttc.loop_start()
+# Initialize
+mongo = MongoClient(MONGO_URI)[DB_NAME][COLLECTION]
+tick_parts = defaultdict(dict)
+latest_deferrable = None
+latest_yesterday = None
 
-def poll_and_publish():
+def fetch_all_data():
+    global latest_deferrable, latest_yesterday
+    data = {}
+    
     for topic, url in URLS.items():
         try:
-            r = requests.get(url, timeout=5)
-            r.raise_for_status()
-            payload = r.text.strip()
-            mqttc.publish(topic, payload, qos=1, retain=False)
-            print(f"{topic} – {payload}")
+            response = requests.get(url, timeout=5)
+            data[topic] = response.json()
+            print(f"Fetched {topic}")
+            
+            # Store special cases immediately
+            if topic == "deferrable":
+                latest_deferrable = data[topic]
+            elif topic == "yesterday":
+                latest_yesterday = data[topic]
+                
         except Exception as e:
-            print(f"{topic}: {e}")
+            print(f"Failed {topic}: {str(e)}")
+            return None
+            
+    return data
 
-try:
+def process_tick_data(data):
+    tick = None
+    
+    # Find tick from any dataset
+    for source in ["sun", "prices", "demand"]:
+        if source in data and "tick" in data[source]:
+            tick = int(data[source]["tick"])
+            break
+            
+    if tick is None:
+        print("No tick found in data")
+        return None
+        
+    # Store relevant data
+    for topic in ["sun", "prices", "demand"]:
+        if topic in data:
+            tick_parts[tick][topic] = data[topic]
+            
+    return tick
+
+def save_complete_tick(tick):
+    if not all(topic in tick_parts[tick] for topic in ["sun", "prices", "demand"]):
+        print(f"Incomplete data for tick {tick}")
+        return False
+        
+    if latest_deferrable is None or latest_yesterday is None:
+        print(f"Missing deferrable/yesterday for tick {tick}")
+        return False
+        
+    document = {
+        "tick": tick,
+        "sun": tick_parts[tick]["sun"],
+        "prices": tick_parts[tick]["prices"],
+        "demand": tick_parts[tick]["demand"],
+        "deferrable": latest_deferrable,
+        "yesterday": latest_yesterday
+    }
+    
+    mongo.insert_one(document)
+    print(f"Saved tick {tick}")
+    del tick_parts[tick]
+    return True
+
+def main():
     while True:
-        poll_and_publish()
+        data = fetch_all_data()
+        if data:
+            tick = process_tick_data(data)
+            if tick is not None:
+                save_complete_tick(tick)
         time.sleep(POLL_PERIOD)
-except KeyboardInterrupt:
-    pass
-finally:
-    mqttc.loop_stop()
-    mqttc.disconnect()
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("Stopped by user")
