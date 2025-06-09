@@ -2,6 +2,15 @@ import numpy as np
 import pandas as pd
 import requests
 import math
+import paho.mqtt.client as mqtt
+
+broker = "192.168.72.60"
+port = 1883
+client_id = "naive"
+topic_to_pico = "algorithm_data"
+
+mqttc = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311)
+mqttc.connect(broker, port, keepalive=60)
 
 BASE_URL = "https://icelec50015.azurewebsites.net"
 SUNRISE = 15
@@ -110,3 +119,5 @@ if __name__ == "__main__":
     print("\nCapacitor activity by tick:")
     for i, desc in enumerate(descriptions_naive):
         print(f"Tick {i+1}: {desc}")
+        mqttc.publish(topic_to_pico, desc)
+        print(f"sent to pico: {desc}")

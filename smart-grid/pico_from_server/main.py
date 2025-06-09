@@ -32,28 +32,36 @@ else:
     print('IP Address:', wlan.ifconfig()[0])
 
 client_id = "pico" # make sure to give unique client id
-broker = "192.168.135.60" # put your ip address in here as for now mosquitto is running locally
+broker = "192.168.72.60" # put your ip address in here as for now mosquitto is running locally
 port = 1883
 topic_from_server = b"server_data" # b has to be there as micropython requres byte string for mqtt topics
 topic_to_server = b"pico_data" # make sure to allocate unique topic
+topic_from_algorithm = b"algorithm_data"
 
 demand_value = 0
 TARGET_P_W = 0.5
 
 def on_message(topic, msg):
     global TARGET_P_W, demand_value
-    message = json.loads(msg.decode())
-    print(f"from server: {message}")#
-    demand_value = message["demand"]["demand"]
-    TARGET_P_W = demand_value/4
-    pid.setpoint = TARGET_P_W
-    print(demand_value)
-    print(TARGET_P_W)
     
+    if topic == topic_from_server:
+        message = json.loads(msg.decode())
+        print(f"from server: {message}")#
+        demand_value = message["demand"]["demand"]
+        TARGET_P_W = demand_value/4
+        pid.setpoint = TARGET_P_W
+        print(demand_value)
+        print(TARGET_P_W)
+        
+    elif topic == topic_from_algorithm:
+        message = msg.decode()
+        print(message)
+
 mqttc = MQTTClient(client_id, broker)
 mqttc.set_callback(on_message)
 mqttc.connect()
 mqttc.subscribe(topic_from_server)
+mqttc.subscribe(topic_from_algorithm)
 print("connected to mqtt")
 
 VREF        = 3.3
@@ -125,7 +133,7 @@ while True:
     current_time = time.ticks_ms()
     if time.ticks_diff(current_time, last_publish_time) >= publish_interval:
         mqttc.publish(topic_to_server, payload)
-        print(f"sent to server: {payload}")
+        #print(f"sent to server: {payload}")
         mqttc.check_msg()
         last_publish_time = current_time
         
