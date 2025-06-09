@@ -1,3 +1,5 @@
+# this script is irrelevant
+
 import time
 #import ubinascii
 #import machine

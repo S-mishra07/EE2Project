@@ -7,7 +7,7 @@ import json
 from bson import ObjectId
 
 
-broker = "192.168.135.60" # change this to AWS ip
+broker = "192.168.72.60" # change this to AWS ip
 port = 1883
 client_id = "fastapi"
 topic_from_pico = "pico_data"
@@ -21,27 +21,38 @@ collection_from_pico = db_from_pico["pico_messages"]
 db_to_pico = client_to_pico["test"]
 collection_to_pico = db_to_pico["combined_ticks"]
 
-
+def get_money(Vout, Iout):
+    power = float(Vout) * float(Iout)
+    data = collection_to_pico.find_one(sort=[("_id", -1)], projection={"tick": 1, "prices": 1, "_id": 0})
+    money = float(data["prices"]["sell_price"]) * power
+    return money
 
 def on_connect(client, *_):
     client.subscribe(topic_from_pico)
     print("Connected to MQTT broker")
 
 def on_message(client, userdata, msg):
+    data = collection_to_pico.find_one(sort=[("_id", -1)], projection={"tick": 1, "_id": 0})
     message = json.loads(msg.payload.decode())
     print(f" from pico: {message}")
+    Vout = message["Vout"]
+    Iout = message["Iout"]
+    money = get_money(Vout, Iout)
     
 
-    #doc = {
-     #   "message": message,
-      #  "topic": msg.topic,
-       # "timestamp": datetime.utcnow()
-    #}
-   # try:
-    #    result = collection.insert_one(doc)
-     #   print(f" Saved to MongoDB with _id: {result.inserted_id}")
-    #except Exception as e:
-     #   print(f"MongoDB insert error: {e}")
+    doc = {
+        "tick": data["tick"],
+        "Vin": message["Vin"],
+        "Vout": message["Vout"],
+        "Iout": message["Iout"],
+        "power": float(Vout) * float(Iout),
+        "money": money
+    }
+    try:
+        result = collection_from_pico.insert_one(doc)
+        print(f" Saved to MongoDB with _id: {result.inserted_id}")
+    except Exception as e:
+        print(f"MongoDB insert error: {e}")
 
 
 mqttc = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311)
@@ -52,7 +63,7 @@ stop_event = threading.Event()
 
 def publish_to_pico():
     while not stop_event.is_set():
-        data = collection_to_pico.find_one(sort=[("_id", -1)], projection={"tick": 1, "demand": 1, "_id": 0})
+        data = collection_to_pico.find_one(sort=[("_id", -1)], projection={"demand": 1, "_id": 0})
         payload = json.dumps(data)
         mqttc.publish(topic_to_pico, payload)
         print(f"sent to pico: {payload}")

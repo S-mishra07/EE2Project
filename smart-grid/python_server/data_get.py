@@ -3,12 +3,10 @@ import requests
 from collections import defaultdict
 from pymongo import MongoClient
 
-# MongoDB Configuration
 MONGO_URI = "mongodb+srv://akarshgopalam:bharadwaj@smart-grid.wnctwen.mongodb.net/test?retryWrites=true&w=majority"
 DB_NAME = "test"
 COLLECTION = "combined_ticks"
 
-# API Endpoints
 URLS = {
     "sun": "https://icelec50015.azurewebsites.net/sun",
     "prices": "https://icelec50015.azurewebsites.net/price",
@@ -17,9 +15,8 @@ URLS = {
     "yesterday": "https://icelec50015.azurewebsites.net/yesterday",
 }
 
-POLL_PERIOD = 4  # seconds
+POLL_PERIOD = 4  
 
-# Initialize
 mongo = MongoClient(MONGO_URI)[DB_NAME][COLLECTION]
 tick_parts = defaultdict(dict)
 latest_deferrable = None
@@ -35,7 +32,6 @@ def fetch_all_data():
             data[topic] = response.json()
             print(f"Fetched {topic}")
             
-            # Store special cases immediately
             if topic == "deferrable":
                 latest_deferrable = data[topic]
             elif topic == "yesterday":
@@ -50,7 +46,6 @@ def fetch_all_data():
 def process_tick_data(data):
     tick = None
     
-    # Find tick from any dataset
     for source in ["sun", "prices", "demand"]:
         if source in data and "tick" in data[source]:
             tick = int(data[source]["tick"])
@@ -60,7 +55,6 @@ def process_tick_data(data):
         print("No tick found in data")
         return None
         
-    # Store relevant data
     for topic in ["sun", "prices", "demand"]:
         if topic in data:
             tick_parts[tick][topic] = data[topic]
