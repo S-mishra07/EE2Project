@@ -4,7 +4,7 @@ import requests
 import math
 import paho.mqtt.client as mqtt
 
-broker = "192.168.72.60"
+broker = "192.168.72.115"
 port = 1883
 client_id = "naive"
 topic_to_pico = "algorithm_data"
