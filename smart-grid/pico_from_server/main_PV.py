@@ -2,6 +2,7 @@ from machine import Pin, I2C, ADC, PWM, Timer
 import time
 import network
 from umqtt.simple import MQTTClient
+import json
 
 ssid = 'MyWiFi'
 password = 'Cloonmoreavenue123'
@@ -29,56 +30,28 @@ else:
     print('Connected successfully!')
     print('IP Address:', wlan.ifconfig()[0])
 
-client_id = "SMPS_capacitor"
+client_id = "SMPS_PV"
 broker = "192.168.72.60"
 port = 1883
-topic_from_algorithm = b"algorithm_data"
-
-# Global variables
-P_ref_constant = 1.5  # Default power reference in Watts
+topic_from_server = b"sun_data"
 
 def on_message(topic, msg):
-    global P_ref_constant
-    message = msg.decode()
-    print(f"Received message: {message}")
-   
-    # Parse message format "charging 0.5j"
-    try:
-        parts = message.strip().split()
-        if len(parts) >= 2:
-            command = parts[0].lower()
-            power_str = parts[1]
-           
-            # Extract numeric value (remove 'j' suffix if present)
-            if power_str.endswith('j'):
-                power_value = float(power_str[:-1])
-            else:
-                power_value = float(power_str)
-           
-            # Set P_ref_constant based on command
-            if command == "charging":
-                P_ref_constant = power_value/5
-                print(f"Set P_ref_constant to {P_ref_constant} W for charging")
-            elif command == "discharging":
-                P_ref_constant = -power_value/5
-                print(f"Set P_ref_constant to {P_ref_constant} W for discharging")
-            else:
-                print(f"Unknown command: {command}")
-               
-    except (ValueError, IndexError) as e:
-        print(f"Error parsing message '{message}': {e}")
+    global irradiance
+    message = json.loads(msg.decode())
+    irradiance = int(message["sun"]["sun"])
+    print(irradiance)
 
 mqttc = MQTTClient(client_id, broker)
 mqttc.set_callback(on_message)
 mqttc.connect()
-mqttc.subscribe(topic_from_algorithm)
+mqttc.subscribe(topic_from_server)
 print("connected to mqtt")
-   
+
 # ADC inputs
 va_pin = ADC(Pin(28))
 vb_pin = ADC(Pin(26))
 
-# Switches
+# Switches (not used, but kept for expansion)
 OL_CL_pin = Pin(12, Pin.IN, Pin.PULL_UP)
 BU_BO_pin = Pin(2, Pin.IN, Pin.PULL_UP)
 
@@ -96,9 +69,12 @@ timer_elapsed = 0
 count = 0
 first_run = 1
 SHUNT_OHMS = 0.10
-OC = 0
 
-# PI Controller
+# Solar parameters
+irradiance = 0
+MPP = 1.0             # Max power output at 100% irradiance (Watts)
+
+# PI controller
 i_err = 0
 i_err_int = 0
 kp = 100
@@ -116,11 +92,11 @@ class ina219:
     REG_SHUNTVOLTAGE = 0x01
     REG_BUSVOLTAGE = 0x02
     REG_CALIBRATION = 0x05
-   
+
     def __init__(self, sr, address, maxi):
         self.address = address
         self.shunt = sr
-   
+
     def vshunt(self):
         reg_bytes = ina_i2c.readfrom_mem(self.address, self.REG_SHUNTVOLTAGE, 2)
         reg_value = int.from_bytes(reg_bytes, 'big')
@@ -130,7 +106,7 @@ class ina219:
         else:
             sign = 1
         return float(reg_value) * 1e-5 * sign
-   
+
     def configure(self):
         ina_i2c.writeto_mem(self.address, self.REG_CONFIG, b'\x19\x9F')
         ina_i2c.writeto_mem(self.address, self.REG_CALIBRATION, b'\x00\x00')
@@ -138,47 +114,52 @@ class ina219:
 # Main loop
 while True:
     mqttc.check_msg()
-   
     if first_run:
         ina = ina219(SHUNT_OHMS, 64, 5)
         ina.configure()
         loop_timer = Timer(mode=Timer.PERIODIC, freq=1000, callback=tick)
         first_run = 0
-   
+
     if timer_elapsed == 1:
         va = 1.017 * (12490 / 2490) * 3.3 * (va_pin.read_u16() / 65536)
         vb = 1.015 * (12490 / 2490) * 3.3 * (vb_pin.read_u16() / 65536)
-       
-        # Use the dynamically updated power reference
-        P_ref = P_ref_constant
-        P_ref = saturate(P_ref, 3, -3)
-       
-        # Avoid division by zero or very low vb
-        if vb < 0.1:
-            i_ref = 0
-        else:
-            i_ref = P_ref / vb
-            i_ref = saturate(i_ref, 0.35, -0.35)  
-       
+
+        # Avoid division by zero
+        if vb < 0.01:
+            vb = 0.01
+
+        # Dynamic power reference from irradiance
+        p_ref = -(irradiance * MPP) / 100  # Negative for boost-style polarity
+
+        # Calculate desired current
+        i_ref = p_ref / vb
+
+        # Get actual current through inductor
         iL = ina.vshunt() / SHUNT_OHMS
+
+        # PI control
         i_err = i_ref - iL
         i_err_int += i_err
-        i_err_int = saturate(i_err_int, 500, -200)
-       
+        i_err_int = saturate(i_err_int, 10000, -10000)
+
         i_pi_out = (kp * i_err) + (ki * i_err_int)
         pwm_out = saturate(i_pi_out, max_pwm, min_pwm)
+
         duty = int(65536 - pwm_out)
         pwm.duty_u16(duty)
-       
+
         count += 1
         timer_elapsed = 0
-       
+
         if count >= 100:
-          #  print("Va = {:.3f} V".format(va))
-           # print("Vb = {:.3f} V".format(vb))
-            print("iL = {:.3f} A".format(iL))
-            #print("P_ref = {:.3f} W".format(P_ref))
-            print("i_ref = {:.3f} A".format(i_ref))
-            #print("PWM Duty = {}".format(duty))
-            #print("Ierr={:.3f}".format(i_err_int))
+            p_actual = vb * iL
+            print("Irradiance = {}%".format(irradiance))
+            print("p_ref     = {:.3f} W".format(p_ref))
+            #print("Va        = {:.3f} V".format(va))
+            #print("Vb        = {:.3f} V".format(vb))
+            print("iL        = {:.3f} A".format(iL))
+            print("i_ref     = {:.3f} A".format(i_ref))
+            #print("p_actual  = {:.3f} W".format(p_actual))
+            print("PWM Duty  = {}".format(duty))
+            #print("-" * 40)
             count = 0

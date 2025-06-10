@@ -175,11 +175,11 @@ def process_single_tick(tick_data, mqttc):
 
     net_flow = current_storage - initial_storage
     if abs(net_flow) < 0.01:
-        flow_description = "nothing"
+        flow_description = "0"
     elif net_flow > 0:
-        flow_description = f"charged {net_flow:.2f} J"
+        flow_description = f"charging {net_flow:.2f}j"
     else:
-        flow_description = f"discharged {abs(net_flow):.2f} J"
+        flow_description = f"discharging {abs(net_flow):.2f}j"
 
     storage_history.append(current_storage)
     profit_history.append(total_profit)

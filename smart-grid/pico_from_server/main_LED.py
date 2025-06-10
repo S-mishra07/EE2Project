@@ -31,7 +31,7 @@ else:
     print('Connected successfully!')
     print('IP Address:', wlan.ifconfig()[0])
 
-client_id = "pico"
+client_id = "LED1"
 broker = "192.168.72.60"
 port = 1883
 topic_from_server = b"server_data"
@@ -46,7 +46,7 @@ def on_message(topic, msg):
     
     if topic == topic_from_server:
         message = json.loads(msg.decode())
-        print(f"from server: {message}")#
+        print(f"from server: {message}")
         demand_value = message["demand"]["demand"]
         TARGET_P_W = demand_value/4
         pid.setpoint = TARGET_P_W
@@ -95,6 +95,7 @@ last_publish_time = time.ticks_ms()
 publish_interval = 1000
 
 while True:
+    mqttc.check_msg()
     pwm_en.value(1)
 
     vin_raw  = CAL * DIV_RATIO * VREF * (vin_pin.read_u16()  / 65_536)
@@ -134,7 +135,6 @@ while True:
     if time.ticks_diff(current_time, last_publish_time) >= publish_interval:
         mqttc.publish(topic_to_server, payload)
         #print(f"sent to server: {payload}")
-        mqttc.check_msg()
         last_publish_time = current_time
         
     time.sleep_ms(4)  

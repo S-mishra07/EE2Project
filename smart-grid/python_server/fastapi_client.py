@@ -7,11 +7,12 @@ import json
 from bson import ObjectId
 
 
-broker = "192.168.72.60" # change this to AWS ip eventually
+broker = "192.168.72.60"
 port = 1883
 client_id = "fastapi"
 topic_from_pico = "pico_data"
-topic_to_pico = "server_data" # has to be same on the pico side
+topic_to_led = "demanad_data" 
+topic_to_PV  = "sun_data"
 
 mongo_url = "mongodb+srv://akarshgopalam:bharadwaj@smart-grid.wnctwen.mongodb.net/test?retryWrites=true&w=majority&appName=smart-grid"
 client_to_pico = MongoClient(mongo_url)
@@ -63,10 +64,14 @@ stop_event = threading.Event()
 
 def publish_to_pico():
     while not stop_event.is_set():
-        data = collection_to_pico.find_one(sort=[("_id", -1)], projection={"demand": 1, "_id": 0})
-        payload = json.dumps(data)
-        mqttc.publish(topic_to_pico, payload)
-        print(f"sent to pico: {payload}")
+        data_to_led = collection_to_pico.find_one(sort=[("_id", -1)], projection={"demand": 1, "_id": 0})
+        payload_to_led = json.dumps(data_to_led)
+        data_to_PV = collection_to_pico.find_one(sort=[("_id", -1)], projection={"sun": 1, "_id": 0})
+        payload_to_PV = json.dumps(data_to_PV)
+        mqttc.publish(topic_to_led, payload_to_led)
+        mqttc.publish(topic_to_PV, payload_to_PV)
+        print(f"sent to LED: {payload_to_led}")
+        print(f"sent to PV: {payload_to_PV}")
         time.sleep(5)
 
 mqttc.loop_start()
