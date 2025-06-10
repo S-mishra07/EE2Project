@@ -8,7 +8,7 @@ from pymongo import MongoClient
 from datetime import datetime, timedelta
 import json
 
-broker = "192.168.72.115"  # change this to AWS ip eventually
+broker = "192.168.72.60"  # change this to AWS ip eventually
 port = 1883
 client_id = "naive"
 topic_to_pico = "algorithm_data"

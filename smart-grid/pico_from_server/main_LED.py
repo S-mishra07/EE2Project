@@ -31,11 +31,11 @@ else:
     print('Connected successfully!')
     print('IP Address:', wlan.ifconfig()[0])
 
-client_id = "pico" # make sure to give unique client id
-broker = "192.168.72.60" # put your ip address in here as for now mosquitto is running locally
+client_id = "pico"
+broker = "192.168.72.60"
 port = 1883
-topic_from_server = b"server_data" # b has to be there as micropython requres byte string for mqtt topics
-topic_to_server = b"pico_data" # make sure to allocate unique topic
+topic_from_server = b"server_data"
+topic_to_server = b"pico_data"
 topic_from_algorithm = b"algorithm_data"
 
 demand_value = 0
