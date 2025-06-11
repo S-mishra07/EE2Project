@@ -31,7 +31,7 @@ else:
     print('IP Address:', wlan.ifconfig()[0])
 
 client_id = "SMPS_PV"
-broker = "192.168.72.60"
+broker = "18.210.146.176"
 port = 1883
 topic_from_server = b"sun_data"
 
@@ -163,3 +163,4 @@ while True:
             print("PWM Duty  = {}".format(duty))
             #print("-" * 40)
             count = 0
+

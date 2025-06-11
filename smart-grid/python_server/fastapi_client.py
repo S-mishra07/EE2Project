@@ -11,7 +11,7 @@ broker = "192.168.72.60"
 port = 1883
 client_id = "fastapi"
 topic_from_pico = "pico_data"
-topic_to_led = "demanad_data" 
+topic_to_led = "demand_data" 
 topic_to_PV  = "sun_data"
 
 mongo_url = "mongodb+srv://akarshgopalam:bharadwaj@smart-grid.wnctwen.mongodb.net/test?retryWrites=true&w=majority&appName=smart-grid"
