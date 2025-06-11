@@ -83,7 +83,7 @@ def on_message(client, userdata, msg):
     
     if msg.topic == topic_from_red2:
         red2_message = json.loads(msg.payload.decode())
-        print(f" from red LED: {red2_message}")
+        print(f" from red2 LED: {red2_message}")
 
         doc = {
         "tick": data["tick"],
@@ -101,7 +101,7 @@ def on_message(client, userdata, msg):
     
     if msg.topic == topic_from_blue:
         blue_message = json.loads(msg.payload.decode())
-        print(f" from red LED: {blue_message}")
+        print(f" from blue LED: {blue_message}")
 
         doc = {
         "tick": data["tick"],
