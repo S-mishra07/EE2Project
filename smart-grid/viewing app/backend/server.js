@@ -161,7 +161,7 @@ export default function App() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-        <DataCard icon={<Sun className="text-yellow-500" />} title="Solar Energy" value={currentData.sun} unit="kW" />
+        <DataCard icon={<Sun className="text-yellow-500" />} title="Sunshine" value={currentData.sun} unit="%" />
         <DataCard icon={<DollarSign className="text-green-500" />} title="Buy Price" value={currentData.price?.buy} unit="$" />
         <DataCard icon={<DollarSign className="text-blue-500" />} title="Sell Price" value={currentData.price?.sell} unit="$" />
         <DataCard icon={<Activity className="text-purple-500" />} title="Demand" value={(currentData.demand ?? 0).toFixed(2)} unit="kW" />
