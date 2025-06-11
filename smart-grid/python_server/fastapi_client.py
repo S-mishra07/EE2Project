@@ -7,7 +7,7 @@ import json
 from bson import ObjectId
 
 
-broker = "192.168.72.60"
+broker = "18.210.146.176"
 port = 1883
 client_id = "fastapi"
 topic_from_pico = "pico_data"
