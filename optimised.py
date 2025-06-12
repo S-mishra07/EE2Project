@@ -731,7 +731,15 @@ def main():
             if last_output_tick is not None and tick == last_output_tick:
                 continue  # Skip duplicate tick
             last_output_tick = tick
-            print(f"Tick {tick}: Storage: {storage:.2f}J | Profit: {profit:.2f} cents | Actions: {tick_actions}")
+            # Calculate charge/discharge delta
+            cap_delta = storage - initial_storage
+            if cap_delta > 0.0001:
+                cap_status = f"charging {cap_delta:.3f}J"
+            elif cap_delta < -0.0001:
+                cap_status = f"discharging {cap_delta:.3f}J"
+            else:
+                cap_status = "0"
+            print(cap_status)
     except KeyboardInterrupt:
         print("\nStopped by user.")
         print(f"\nFinal Statistics:")
