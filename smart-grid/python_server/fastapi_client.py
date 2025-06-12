@@ -7,7 +7,7 @@ import json
 from bson import ObjectId
 
 
-broker = "18.210.146.176"
+broker = "192.168.72.60"
 port = 1883
 client_id = "fastapi"
 topic_from_yellow = "yellow_data"
@@ -16,6 +16,8 @@ topic_from_red2 = "red2_data"
 topic_from_blue = "blue_data"
 topic_to_led = "demand_data" 
 topic_to_PV  = "sun_data"
+topic_from_grid = "grid_data"
+topic_from_cap = "cap_data"
 
 mongo_url = "mongodb+srv://akarshgopalam:bharadwaj@smart-grid.wnctwen.mongodb.net/test?retryWrites=true&w=majority&appName=smart-grid"
 client_to_pico = MongoClient(mongo_url)
@@ -25,20 +27,32 @@ collection_from_yellow = db_from_pico["pico_yellow"]
 collection_from_red = db_from_pico["pico_red"]
 collection_from_red2 = db_from_pico["pico_red2"]
 collection_from_blue = db_from_pico["pico_blue"]
+collection_from_grid = db_from_pico["grid_money"]
+collection_from_cap = db_from_pico["cap_energy"]
 db_to_pico = client_to_pico["test"]
 collection_to_pico = db_to_pico["combined_ticks"]
 
+buy_money = 0
+sell_money = 0
+
 def get_money(Vout, Iout):
+    global buy_money, sell_money
+    buy_money = 0
+    sell_money = 0
     power = float(Vout) * float(Iout)
     data = collection_to_pico.find_one(sort=[("_id", -1)], projection={"tick": 1, "prices": 1, "_id": 0})
-    money = float(data["prices"]["sell_price"]) * power
-    return money
+    if float(Iout) >= 0:
+        buy_money = float(data["prices"]["buy_price"]) * power
+    elif float(Iout) < 0:
+        sell_money = float(data["prices"]["sell_price"]) * power
 
 def on_connect(client, *_):
     client.subscribe(topic_from_yellow)
     client.subscribe(topic_from_red)
     client.subscribe(topic_from_red2)
     client.subscribe(topic_from_blue)
+    client.subscribe(topic_from_grid)
+    client.subscribe(topic_from_cap)
     print("Connected to MQTT broker")
 
 def on_message(client, userdata, msg):
@@ -116,6 +130,47 @@ def on_message(client, userdata, msg):
             print(f" Saved to MongoDB with _id: {result.inserted_id}")
         except Exception as e:
             print(f"MongoDB insert error: {e}")
+    
+    if msg.topic == "grid_data":
+
+        grid_message = json.loads(msg.payload.decode())
+        print(f" from grid SMPS: {grid_message}")
+
+        get_money(grid_message["Vout"], grid_message["Iout"])
+
+        doc = {
+        "tick": data["tick"],
+        "Vout": grid_message["Vout"],
+        "Iout": grid_message["Iout"],
+        "power": float(grid_message["Vout"]) * float(grid_message["Iout"]),
+        "buy money": buy_money,
+        "sell_money": sell_money
+        }
+
+        try:
+            result = collection_from_grid.insert_one(doc)
+            print(f" Saved to MongoDB with _id: {result.inserted_id}")
+        except Exception as e:
+            print(f"MongoDB insert error: {e}")
+    
+    if msg.topic == "cap_data":
+
+        cap_message = json.loads(msg.payload.decode())
+        print(f"from cap: {cap_message}")
+
+        doc = {
+        "tick": data["tick"],
+        "Vout": cap_message["Vout"],
+        "Iout": cap_message["Iout"],
+        "energy": 0.5 * 0.5 * (float(cap_message["Vout"]) ** 2)
+        }
+
+        try:
+            result = collection_from_cap.insert_one(doc)
+            print(f" Saved to MongoDB with _id: {result.inserted_id}")
+        except Exception as e:
+            print(f"MongoDB insert error: {e}")
+
 
 mqttc = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311)
 mqttc.on_connect = on_connect
