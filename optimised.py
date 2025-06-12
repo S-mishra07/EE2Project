@@ -522,6 +522,7 @@ def main():
     scheduled_deferrals = None
     defer_lookup = {}
     try:
+        last_output_tick = None  # Track last printed tick
         while True:
             doc = collection.find_one(
                 sort=[("_id", -1)],
@@ -726,6 +727,10 @@ def main():
                         optdef_collection.insert_one({k: v for k, v in d.items() if k != 'optimisation_reason'})
                 except Exception as e:
                     print(f"Warning: Failed to log optimised deferable schedule: {e}")
+            # Only print/process if this tick is different from the last output tick
+            if last_output_tick is not None and tick == last_output_tick:
+                continue  # Skip duplicate tick
+            last_output_tick = tick
             print(f"Tick {tick}: Storage: {storage:.2f}J | Profit: {profit:.2f} cents | Actions: {tick_actions}")
     except KeyboardInterrupt:
         print("\nStopped by user.")
