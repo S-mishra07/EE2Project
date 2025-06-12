@@ -600,8 +600,8 @@ def main():
                     print("-"*70)
                 # --- BEGIN: Comprehensive deferable scheduling summary ---
                 print("\nALL DEFERABLES AND THEIR SCHEDULING STATUS:")
-                print(f"{'Deferable':>10} | {'Window':>15} | {'Amount (J)':>10} | {'Scheduled Tick(s)':>20} | {'Scheduled Amount(s)':>20} | {'Reason(s)':>18}")
-                print("-"*110)
+                print(f"{'Deferable':>10} | {'Window':>15} | {'Amount (J)':>10} | {'Scheduled Tick(s)':>20} | {'Scheduled Amount(s)':>20}")
+                print("-"*90)
                 if not all_defer_df.empty:
                     for idx, row in all_defer_df.iterrows():
                         start = row.get('start', '-')
@@ -612,23 +612,31 @@ def main():
                         if scheduled:
                             ticks = ', '.join(str(int(d['tick'])) for d in scheduled)
                             amounts = ', '.join(f"{d['demand']:.2f}" for d in scheduled)
-                            reasons = ', '.join(d['optimisation_reason'] for d in scheduled)
                         else:
                             # Fallback: find any scheduled deferral that overlaps the window and has similar energy
                             fallback = [d for d in scheduled_deferrals if d['original_start'] == start and d['original_end'] == end]
                             if fallback:
                                 ticks = ', '.join(str(int(d['tick'])) for d in fallback)
                                 amounts = ', '.join(f"{d['demand']:.2f}" for d in fallback)
-                                reasons = ', '.join(d['optimisation_reason'] for d in fallback)
                             else:
                                 ticks = 'NOT SCHEDULED'
                                 amounts = '-'
-                                reasons = '-'
-                        print(f"{idx:10} | {str(start)}-{str(end):>11} | {demand_amt:10.2f} | {ticks:>20} | {amounts:>20} | {reasons:>18}")
+                        print(f"{idx:10} | {str(start)}-{str(end):>11} | {demand_amt:10.2f} | {ticks:>20} | {amounts:>20}")
                 else:
                     print("No deferables present.")
-                print("-"*110)
+                print("-"*90)
                 # --- END: Comprehensive deferable scheduling summary ---
+                # --- Log optimised deferable schedule to MongoDB (only once) ---
+                try:
+                    from datetime import UTC
+                    optimised_collection = db["optimised_deferable_slots"]
+                    optimised_collection.replace_one(
+                        {"_id": "latest"},
+                        {"_id": "latest", "schedule": scheduled_deferrals, "timestamp": datetime.now(UTC)},
+                        upsert=True
+                    )
+                except Exception as e:
+                    print(f"Warning: Failed to log optimised deferable schedule: {e}")
             recent_ticks.append({
                 'tick': tick,
                 'demand': demand,
@@ -690,24 +698,35 @@ def main():
                     remaining_demand = total_power_demand - actual_energy_delivered
                 else:
                     remaining_demand = total_power_demand
-                # Always log grid use if any remaining demand (even very small)
                 if remaining_demand > 0.0:
                     cost = remaining_demand * buy_price
                     profit -= cost
-                    tick_actions.append(f"grid used: {remaining_demand:.3f}J")
-            storage = max(MIN_STORAGE, min(storage, MAX_STORAGE))
-            net_flow = storage - initial_storage
-            if abs(net_flow) < 0.01:
-                flow_description = "0"
-            elif net_flow > 0:
-                flow_description = f"charging {net_flow:.2f}j"
-            else:
-                flow_description = f"discharging {abs(net_flow):.2f}j"
-            storage_over_time.append(storage)
-            profit_over_time.append(profit)
-            storage_states.append(flow_description)
+                    tick_actions.append(f"bought from external grid: {remaining_demand:.3f}J")
+            elif total_power_demand > 0:
+                cost = total_power_demand * buy_price
+                profit -= cost
+                tick_actions.append(f"bought from external grid: {total_power_demand:.3f}J")
             actions.extend(tick_actions)
-            print(f"Tick {tick}: {flow_description} | Storage: {storage:.2f}J | Profit: {profit:.2f} cents | Actions: {tick_actions}")
+            # Send actions to MongoDB for this tick (to 'actions' collection)
+            try:
+                actions_collection = db["actions"]
+                actions_collection.update_one(
+                    {'tick': tick},
+                    {'$set': {'actions': tick_actions}},
+                    upsert=True
+                )
+            except Exception as e:
+                print(f"Warning: Failed to log actions for tick {tick} in 'actions' collection: {e}")
+            # Send optimised deferable schedule to MongoDB (once, after schedule is built)
+            if scheduled_deferrals is not None and tick == int(all_defer_df['start'].min()):
+                try:
+                    optdef_collection = db["optimised_deferable_slots"]
+                    optdef_collection.delete_many({})  # Clear previous
+                    for d in scheduled_deferrals:
+                        optdef_collection.insert_one({k: v for k, v in d.items() if k != 'optimisation_reason'})
+                except Exception as e:
+                    print(f"Warning: Failed to log optimised deferable schedule: {e}")
+            print(f"Tick {tick}: Storage: {storage:.2f}J | Profit: {profit:.2f} cents | Actions: {tick_actions}")
     except KeyboardInterrupt:
         print("\nStopped by user.")
         print(f"\nFinal Statistics:")
