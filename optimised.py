@@ -8,7 +8,11 @@ from collections import deque
 from pymongo import MongoClient
 from datetime import datetime, timedelta
 import json
+from bson.objectid import ObjectId
+import time
+import warnings
 
+warnings.filterwarnings("ignore", category=RuntimeWarning, message="Mean of empty slice")
 
 mongo_url = "mongodb+srv://akarshgopalam:bharadwaj@smart-grid.wnctwen.mongodb.net/test?retryWrites=true&w=majority&appName=smart-grid"
 client = MongoClient(mongo_url)
@@ -29,43 +33,33 @@ STORAGE_DECAY = 0.9995
 
 MAX_CHARGE_RATE = 7.25
 
-
 def fetch_data():
     BASE_URL = "https://icelec50015.azurewebsites.net" 
     try:
-        print("Fetching yesterday's real data...")
         response = requests.get(f"{BASE_URL}/yesterday")
         if response.status_code != 200:
-            print(f"Error: Server returned status code {response.status_code}")
             return None, None
         df = pd.DataFrame(response.json())
-        print(f"Loaded {len(df)} real data points from yesterday")
         df['sun'] = df['tick'].apply(lambda t: 
             int(math.sin((t-SUNRISE)*math.pi/DAY_LENGTH)*100) 
             if SUNRISE <= t < SUNRISE + DAY_LENGTH else 0
         )
-        print("Fetching real deferable demands...")
         defer_response = requests.get(f"{BASE_URL}/deferables")
         if defer_response.status_code == 200:
             defer_data = defer_response.json()
             defer_df = pd.DataFrame(defer_data)
             if len(defer_df) > 0:
-                print(f"Loaded {len(defer_df)} real deferable demands")
                 if 'demand' not in defer_df.columns:
                     for alt_col in ['energy', 'amount', 'value']:
                         if alt_col in defer_df.columns:
                             defer_df['demand'] = defer_df[alt_col]
-                            print(f"Using '{alt_col}' column as demand")
                             break
             else:
                 defer_df = pd.DataFrame(columns=['start', 'end', 'demand'])
-                print("No deferable demands found")
         else:
             defer_df = pd.DataFrame(columns=['start', 'end', 'demand'])
-            print("Could not fetch deferable demands")
         return df, defer_df
     except requests.RequestException as e:
-        print(f"Error connecting to server: {e}")
         return None, None
 
 def advanced_ml_forecasting(df, window=20):
@@ -94,7 +88,6 @@ def advanced_ml_forecasting(df, window=20):
     df['price_demand_corr'] = df['buy_price'].rolling(window).corr(df['demand'])
     forecast_cols = [col for col in df.columns if 'forecast' in col or col.endswith('_ma')]
     for col in forecast_cols:
-        # Fixed deprecated fillna method
         df[col] = df[col].bfill().ffill()
     numeric_cols = ['price_volatility', 'price_momentum', 'price_rsi', 'sun_trend', 
                    'demand_volatility', 'demand_trend', 'price_demand_corr']
@@ -112,7 +105,6 @@ def calculate_rsi(prices, window=14):
 
 def ultra_advanced_defer_optimisation(defer_df, df, max_power_per_tick=12):
     if len(defer_df) == 0:
-        print("No deferable demands to optimise")
         return []
     scheduled_deferrals = []
     for _, defer_row in defer_df.iterrows():
@@ -120,7 +112,6 @@ def ultra_advanced_defer_optimisation(defer_df, df, max_power_per_tick=12):
             start_tick = defer_row['start']
             end_tick = defer_row['end']
             total_energy_joules = defer_row['demand']
-            print(f"optimising deferable: {total_energy_joules:.2f}J from tick {start_tick} to {end_tick}")
             window_df = df[(df['tick'] >= start_tick) & (df['tick'] <= end_tick)].copy()
             if len(window_df) == 0:
                 continue
@@ -153,10 +144,10 @@ def ultra_advanced_defer_optimisation(defer_df, df, max_power_per_tick=12):
             window_df_sorted = window_df.sort_values('total_score')
             selected_ticks = window_df_sorted.head(num_ticks)
             scores = selected_ticks['total_score'].values
-            max_score = scores.max()
-            normalized_scores = (max_score - scores) / (max_score - scores.min() + 0.001)
-            exp_weights = np.exp(normalized_scores * 2)
-            weights = exp_weights / exp_weights.sum()
+            max_score = scores.max() if len(scores) > 0 else 1
+            normalized_scores = (max_score - scores) / (max_score - scores.min() + 0.001) if len(scores) > 0 else np.array([1.0])
+            exp_weights = np.exp(normalized_scores * 2) if len(scores) > 0 else np.array([1.0])
+            weights = exp_weights / exp_weights.sum() if len(scores) > 0 else np.array([1.0])
             remaining_energy = total_energy_joules
             energy_allocations = []
             for i, weight in enumerate(weights):
@@ -173,6 +164,8 @@ def ultra_advanced_defer_optimisation(defer_df, df, max_power_per_tick=12):
                 remaining_energy -= allocated_energy
                 if remaining_energy <= 0.01:
                     break
+            # Only add if we actually scheduled something
+            scheduled_this_defer = False
             for idx, ((_, tick_row), energy) in enumerate(zip(selected_ticks.iterrows(), energy_allocations)):
                 if energy > 0.1:
                     scheduled_deferrals.append({
@@ -186,8 +179,22 @@ def ultra_advanced_defer_optimisation(defer_df, df, max_power_per_tick=12):
                         'weight': weights[idx] if idx < len(weights) else 0,
                         'optimisation_reason': get_optimisation_reason(tick_row)
                     })
+                    scheduled_this_defer = True
+            # Fallback: if nothing was scheduled, schedule at the single cheapest tick in window
+            if not scheduled_this_defer:
+                cheapest_row = window_df.sort_values('buy_price').iloc[0]
+                scheduled_deferrals.append({
+                    'tick': cheapest_row['tick'],
+                    'demand': total_energy_joules,
+                    'original_start': start_tick,
+                    'original_end': end_tick,
+                    'total_original_energy': total_energy_joules,
+                    'score': cheapest_row['total_score'] if 'total_score' in cheapest_row else 0,
+                    'split_part': '1/1',
+                    'weight': 1.0,
+                    'optimisation_reason': 'fallback_cheapest_tick'
+                })
         except Exception as e:
-            print(f"Error in ultra-advanced defer optimisation: {e}")
             continue
     return scheduled_deferrals
 
@@ -264,12 +271,8 @@ def ultra_loss_minimizing_algorithm(df, defer_df, window=20):
     profit_over_time = []
     storage_over_time = []
     storage_states = []
-    
     energy_purchases = [] 
     charging_events = []
-
-    print(f"Tick -1: Storage {storage:.2f}J (initial state)")
-    
     scheduled_deferrals = ultra_advanced_defer_optimisation(defer_df, df)
     defer_lookup = {}
     for defer_item in scheduled_deferrals:
@@ -277,10 +280,7 @@ def ultra_loss_minimizing_algorithm(df, defer_df, window=20):
         if tick not in defer_lookup:
             defer_lookup[tick] = []
         defer_lookup[tick].append(defer_item)
-    print(f"Optimised {len(scheduled_deferrals)} deferable demand segments")
-    
     price_history = deque(maxlen=10)
-    
     for i in range(len(df)):
         row = df.iloc[i]
         tick = row['tick']
@@ -288,29 +288,24 @@ def ultra_loss_minimizing_algorithm(df, defer_df, window=20):
         buy_price = row['buy_price']
         immediate_demand = row['demand']
         sun = row['sun']
-        
         storage = storage * STORAGE_DECAY
         initial_storage = storage
-        
         price_history.append(buy_price)
-        
         deferable_power = 0
         if tick in defer_lookup:
             deferable_power = sum(d['demand'] for d in defer_lookup[tick])
             if deferable_power > 0:
                 reasons = [d['optimisation_reason'] for d in defer_lookup[tick]]
-                actions.append(f'defer_{deferable_power:.2f}W_({"|".join(set(reasons))})')
-        
+                actions.append(f'deferable scheduled: {deferable_power:.2f}J (reason: {"|".join(set(reasons))})')
         total_power_demand = immediate_demand + deferable_power
         storage_target = dynamic_storage_optimisation(tick, df, storage)
-
         if sun > 5:
             solar_energy = sun * 0.01 * 3.2
             charge_possible = (MAX_STORAGE - storage) * (1 - np.exp(-DT / CHARGE_TAU))
             actual_charge = min(solar_energy, charge_possible) * CHARGE_EFFICIENCY
             if actual_charge > 0.005:
                 storage += actual_charge
-                actions.append(f'solar_{actual_charge:.3f}J')
+                actions.append(f"solar charged: {actual_charge:.3f}J")
                 charging_events.append({
                     'tick': tick,
                     'type': 'solar',
@@ -318,18 +313,16 @@ def ultra_loss_minimizing_algorithm(df, defer_df, window=20):
                     'storage_before': initial_storage,
                     'storage_after': storage
                 })
-        
         should_buy, buy_amount = calculate_optimal_buy_decision(
             row, storage, storage_target, price_history, total_power_demand, tick
         )
         if should_buy and buy_amount > 0.05:
-            max_chargeable = min(buy_amount, MAX_CHARGE_RATE)
+            max_chargeable = min(buy_amount, MAX_CHARGE_RATE, MAX_STORAGE - storage)
             energy_stored = max_chargeable * CHARGE_EFFICIENCY
             storage += energy_stored
             cost = max_chargeable * buy_price
             profit -= cost
-            actions.append(f'buy_{max_chargeable:.3f}J@{buy_price:.2f}')
-            
+            actions.append(f"bought for storage: {max_chargeable:.3f}J @ {buy_price:.2f}")
             energy_purchases.append({
                 'tick': tick,
                 'energy_bought': max_chargeable,
@@ -338,7 +331,6 @@ def ultra_loss_minimizing_algorithm(df, defer_df, window=20):
                 'energy_stored': energy_stored,
                 'efficiency_loss': max_chargeable - energy_stored
             })
-            
             charging_events.append({
                 'tick': tick,
                 'type': 'grid_purchase',
@@ -346,34 +338,30 @@ def ultra_loss_minimizing_algorithm(df, defer_df, window=20):
                 'storage_before': storage - energy_stored,
                 'storage_after': storage
             })
-        
         should_sell, sell_amount = calculate_optimal_sell_decision(
             row, storage, storage_target, price_history, total_power_demand
         )
         if should_sell and sell_amount > 0.05:
+            sell_amount = min(sell_amount, storage)
             energy_sold = sell_amount * DISCHARGE_EFFICIENCY
             storage -= sell_amount
             profit += energy_sold * sell_price
-            actions.append(f'sell_{sell_amount:.3f}J@{sell_price:.2f}')
-
-        if total_power_demand > 0:
+            actions.append(f"sold from storage: {sell_amount:.3f}J @ {sell_price:.2f}")
+        if total_power_demand > 0 and 'optimise_demand_fulfillment' in globals():
             optimal_storage_use, grid_purchase = optimise_demand_fulfillment(
                 total_power_demand, storage, buy_price, sell_price
             )
             if optimal_storage_use > 0.01:
                 actual_energy_delivered = optimal_storage_use * DISCHARGE_EFFICIENCY
                 storage -= optimal_storage_use
-                actions.append(f'discharge_{optimal_storage_use:.3f}J')
+                actions.append(f"discharged to meet demand: {optimal_storage_use:.3f}J")
                 remaining_demand = total_power_demand - actual_energy_delivered
             else:
                 remaining_demand = total_power_demand
-            
-            if remaining_demand > 0.01:
+            if remaining_demand > 0.0:
                 cost = remaining_demand * buy_price
                 profit -= cost
-                efficiency_bonus = "eff" if remaining_demand < total_power_demand * 0.5 else "std"
-                actions.append(f'grid_{remaining_demand:.3f}J_{efficiency_bonus}')
-                
+                actions.append(f"grid used: {remaining_demand:.3f}J")
                 energy_purchases.append({
                     'tick': tick,
                     'energy_bought': remaining_demand,
@@ -383,9 +371,7 @@ def ultra_loss_minimizing_algorithm(df, defer_df, window=20):
                     'efficiency_loss': 0,
                     'purpose': 'immediate_demand'
                 })
-
         storage = max(MIN_STORAGE, min(storage, MAX_STORAGE))
-
         storage_change = storage - initial_storage
         if storage_change > 0.1:
             state = "charged"
@@ -393,22 +379,17 @@ def ultra_loss_minimizing_algorithm(df, defer_df, window=20):
             state = "discharged"
         else:
             state = "no_change"
-
         storage_over_time.append(storage)
         profit_over_time.append(profit)
         storage_states.append(state)
-
         print(f"Tick {tick}: Storage at END of tick {storage:.2f}J ({state}, {storage_change:.3f}J)")
-    
     print(f"\nAlgorithm complete! Final storage: {storage:.2f}J")
-    
     print("\n" + "="*60)
     print("CAPACITOR CHARGING EVENTS")
     print("="*60)
     for event in charging_events:
         print(f"Tick {event['tick']}: {event['type'].upper()} charged {event['energy']:.3f}J "
               f"(Storage: {event['storage_before']:.2f}J → {event['storage_after']:.2f}J)")
-    
     print("\n" + "="*60)
     print("ENERGY PURCHASE LOG")
     print("="*60)
@@ -416,7 +397,6 @@ def ultra_loss_minimizing_algorithm(df, defer_df, window=20):
     total_cost = 0
     storage_purchases = [p for p in energy_purchases if p.get('purpose') != 'immediate_demand']
     demand_purchases = [p for p in energy_purchases if p.get('purpose') == 'immediate_demand']
-    
     if storage_purchases:
         print("STORAGE PURCHASES:")
         for purchase in storage_purchases:
@@ -425,7 +405,6 @@ def ultra_loss_minimizing_algorithm(df, defer_df, window=20):
             print(f"  Tick {purchase['tick']}: Bought {purchase['energy_bought']:.3f}J @ ${purchase['price_per_unit']:.2f}/J "
                   f"= ${purchase['total_cost']:.2f} (Stored: {purchase['energy_stored']:.3f}J, "
                   f"Loss: {purchase['efficiency_loss']:.3f}J)")
-    
     if demand_purchases:
         print("\nIMMEDIATE DEMAND PURCHASES:")
         for purchase in demand_purchases:
@@ -433,12 +412,10 @@ def ultra_loss_minimizing_algorithm(df, defer_df, window=20):
             total_cost += purchase['total_cost']
             print(f"  Tick {purchase['tick']}: Bought {purchase['energy_bought']:.3f}J @ ${purchase['price_per_unit']:.2f}/J "
                   f"= ${purchase['total_cost']:.2f} (Direct consumption)")
-    
     print(f"\nPURCHASE SUMMARY:")
     print(f"  Total Energy Purchased: {total_energy_bought:.2f}J")
     print(f"  Total Purchase Cost: ${total_cost:.2f}")
     print(f"  Average Price Paid: ${total_cost/max(total_energy_bought, 0.001):.2f}/J")
-    
     return storage_over_time, profit_over_time, actions, scheduled_deferrals, storage_states
 
 def calculate_optimal_buy_decision(row, current_storage, storage_target, price_history, total_demand, tick):
@@ -468,7 +445,6 @@ def calculate_optimal_buy_decision(row, current_storage, storage_target, price_h
     )
     should_buy = (buy_score > 0.6) or (urgency_factor > 1.5 and buy_score > 0.4)
     if should_buy:
-        # Respect charging rate limits
         max_possible = min(MAX_CHARGE_RATE, MAX_STORAGE - current_storage)
         if urgency_factor > 1.5:
             buy_amount = max_possible * 0.8
@@ -528,32 +504,216 @@ def optimise_demand_fulfillment(total_demand, current_storage, buy_price, sell_p
     return optimal_storage_use, remaining_grid
 
 def main():
-    print("Starting Ultra-Advanced Energy Trading System")
-    df, defer_df = fetch_data()
-    if df is None or defer_df is None:
-        print("Failed to retrieve valid data. Exiting...")
-        return
-    
-    storage_levels, profit_history, actions_list, deferrals, storage_states = ultra_loss_minimizing_algorithm(df, defer_df)
-    
-    result_df = df.copy()
-    result_df['storage'] = storage_levels
-    result_df['profit'] = profit_history
-    result_df['storage_state'] = storage_states
-    
-    if len(actions_list) < len(result_df):
-        actions_list.extend(['none'] * (len(result_df) - len(actions_list)))
-    elif len(actions_list) > len(result_df):
-        actions_list = actions_list[:len(result_df)]
-    
-    result_df['action'] = actions_list
-
-    state_counts = pd.Series(storage_states).value_counts()
-    print("\nStorage State Summary:")
-    for state, count in state_counts.items():
-        print(f"  {state}: {count} ticks ({count/len(storage_states)*100:.1f}%)")
-    
-    print(f"\nFinal Loss: {profit_history[-1]:.2f} dollars")
+    print("Script started")
+    print("MongoDB connection established successfully.")
+    print("Entered main() function.")
+    print("Starting Ultra-Advanced Energy Trading System (LIVE MODE: only most recent tick)")
+    last_processed_id = None
+    storage = 0.0
+    profit = 0.0
+    actions = []
+    storage_over_time = []
+    profit_over_time = []
+    storage_states = []
+    price_history = deque(maxlen=10)
+    recent_ticks = []
+    energy_purchases = []
+    charging_events = []
+    scheduled_deferrals = None
+    defer_lookup = {}
+    try:
+        while True:
+            doc = collection.find_one(
+                sort=[("_id", -1)],
+                projection={"_id": 1, "tick": 1, "demand": 1, "prices": 1, "sun": 1, "deferrable": 1}
+            )
+            if not doc:
+                time.sleep(2)
+                continue
+            current_id = doc["_id"]
+            if last_processed_id == current_id:
+                time.sleep(2)
+                continue
+            last_processed_id = current_id
+            tick = int(doc.get('tick', 0))
+            demand_raw = doc.get('demand', {})
+            if isinstance(demand_raw, dict):
+                demand = float(demand_raw.get('demand', 0))
+            else:
+                demand = float(demand_raw) if demand_raw else 0
+            prices_raw = doc.get('prices', {})
+            if isinstance(prices_raw, dict):
+                sell_price = float(prices_raw.get('sell_price', 0))
+                buy_price = float(prices_raw.get('buy_price', sell_price * 0.5))
+            else:
+                sell_price = 0
+                buy_price = 0
+            sun_raw = doc.get('sun', {})
+            if isinstance(sun_raw, dict):
+                sun = int(sun_raw.get('sun', 0))
+            elif sun_raw is not None:
+                sun = int(sun_raw)
+            else:
+                sun = 0
+            defer_df = pd.DataFrame()
+            if 'deferrable' in doc and isinstance(doc['deferrable'], list) and len(doc['deferrable']) > 0:
+                defer_df = pd.DataFrame(doc['deferrable'])
+                if 'energy' in defer_df.columns and 'demand' not in defer_df.columns:
+                    defer_df['demand'] = defer_df['energy']
+                if 'start' not in defer_df.columns and 'tick' in defer_df.columns:
+                    defer_df['start'] = defer_df['tick']
+                if 'end' not in defer_df.columns:
+                    defer_df['end'] = defer_df['start']
+            if scheduled_deferrals is None:
+                all_defer_df = defer_df.copy() if not defer_df.empty else pd.DataFrame(columns=['start','end','demand'])
+                df_context = pd.DataFrame(recent_ticks) if recent_ticks else pd.DataFrame([{'tick': tick, 'demand': demand, 'sell_price': sell_price, 'buy_price': buy_price, 'sun': sun}])
+                # --- Patch: Ensure df_context covers all deferable windows ---
+                if not all_defer_df.empty and not df_context.empty:
+                    min_tick = int(all_defer_df['start'].min())
+                    max_tick = int(all_defer_df['end'].max())
+                    all_ticks = set(df_context['tick'])
+                    missing_ticks = [t for t in range(min_tick, max_tick+1) if t not in all_ticks]
+                    if missing_ticks:
+                        # Use last known values as defaults
+                        last_row = df_context.iloc[-1].to_dict()
+                        fill_rows = []
+                        for t in missing_ticks:
+                            fill_row = last_row.copy()
+                            fill_row['tick'] = t
+                            fill_rows.append(fill_row)
+                        df_context = pd.concat([df_context, pd.DataFrame(fill_rows)], ignore_index=True)
+                        df_context = df_context.sort_values('tick').reset_index(drop=True)
+                # --- End patch ---
+                df_context = advanced_ml_forecasting(df_context, window=20)
+                scheduled_deferrals = ultra_advanced_defer_optimisation(all_defer_df, df_context)
+                for defer_item in scheduled_deferrals:
+                    t = defer_item['tick']
+                    if t not in defer_lookup:
+                        defer_lookup[t] = []
+                    defer_lookup[t].append(defer_item)
+                if scheduled_deferrals:
+                    print("\nDEFERABLE SCHEDULE (Optimised):")
+                    print(f"{'Tick':>6} | {'Amount (J)':>10} | {'Reason':>30} | {'Orig. Window':>15}")
+                    print("-"*70)
+                    for d in scheduled_deferrals:
+                        print(f"{int(d['tick']):6} | {d['demand']:10.2f} | {d['optimisation_reason'][:28]:>30} | {str(d['original_start'])}-{str(d['original_end'])}")
+                    print("-"*70)
+                # --- BEGIN: Comprehensive deferable scheduling summary ---
+                print("\nALL DEFERABLES AND THEIR SCHEDULING STATUS:")
+                print(f"{'Deferable':>10} | {'Window':>15} | {'Amount (J)':>10} | {'Scheduled Tick(s)':>20} | {'Scheduled Amount(s)':>20} | {'Reason(s)':>18}")
+                print("-"*110)
+                if not all_defer_df.empty:
+                    for idx, row in all_defer_df.iterrows():
+                        start = row.get('start', '-')
+                        end = row.get('end', '-')
+                        demand_amt = row.get('demand', '-')
+                        # Find all scheduled deferrals for this deferable (by matching original window and total_original_energy with tolerance)
+                        scheduled = [d for d in scheduled_deferrals if d['original_start'] == start and d['original_end'] == end and abs(d['total_original_energy'] - demand_amt) < 1e-2]
+                        if scheduled:
+                            ticks = ', '.join(str(int(d['tick'])) for d in scheduled)
+                            amounts = ', '.join(f"{d['demand']:.2f}" for d in scheduled)
+                            reasons = ', '.join(d['optimisation_reason'] for d in scheduled)
+                        else:
+                            # Fallback: find any scheduled deferral that overlaps the window and has similar energy
+                            fallback = [d for d in scheduled_deferrals if d['original_start'] == start and d['original_end'] == end]
+                            if fallback:
+                                ticks = ', '.join(str(int(d['tick'])) for d in fallback)
+                                amounts = ', '.join(f"{d['demand']:.2f}" for d in fallback)
+                                reasons = ', '.join(d['optimisation_reason'] for d in fallback)
+                            else:
+                                ticks = 'NOT SCHEDULED'
+                                amounts = '-'
+                                reasons = '-'
+                        print(f"{idx:10} | {str(start)}-{str(end):>11} | {demand_amt:10.2f} | {ticks:>20} | {amounts:>20} | {reasons:>18}")
+                else:
+                    print("No deferables present.")
+                print("-"*110)
+                # --- END: Comprehensive deferable scheduling summary ---
+            recent_ticks.append({
+                'tick': tick,
+                'demand': demand,
+                'sell_price': sell_price,
+                'buy_price': buy_price,
+                'sun': sun
+            })
+            if len(recent_ticks) > 100:
+                recent_ticks.pop(0)
+            df = pd.DataFrame(recent_ticks)
+            df = advanced_ml_forecasting(df, window=20)
+            initial_storage = storage
+            tick_actions = []
+            storage = storage * STORAGE_DECAY
+            price_history.append(buy_price)
+            deferable_power = 0
+            if tick in defer_lookup:
+                deferable_power = sum(d['demand'] for d in defer_lookup[tick])
+                if deferable_power > 0:
+                    reasons = [d['optimisation_reason'] for d in defer_lookup[tick]]
+                    tick_actions.append(f"deferable scheduled: {deferable_power:.2f}J (reason: {'|'.join(set(reasons))})")
+            total_power_demand = demand + deferable_power
+            storage_target = dynamic_storage_optimisation(tick, df, storage)
+            row = df.iloc[-1].to_dict() if not df.empty else {'buy_price': buy_price, 'sell_price': sell_price, 'sun': sun, 'demand': demand}
+            if sun > 5:
+                solar_energy = sun * 0.01 * 3.2
+                charge_possible = (MAX_STORAGE - storage) * (1 - np.exp(-DT / CHARGE_TAU))
+                actual_charge = min(solar_energy, charge_possible) * CHARGE_EFFICIENCY
+                if actual_charge > 0.005:
+                    storage += actual_charge
+                    tick_actions.append(f"solar charged: {actual_charge:.3f}J")
+            should_buy, buy_amount = calculate_optimal_buy_decision(
+                row, storage, storage_target, price_history, total_power_demand, tick
+            )
+            if should_buy and buy_amount > 0.05:
+                max_chargeable = min(buy_amount, MAX_CHARGE_RATE, MAX_STORAGE - storage)
+                energy_stored = max_chargeable * CHARGE_EFFICIENCY
+                storage += energy_stored
+                cost = max_chargeable * buy_price
+                profit -= cost
+                tick_actions.append(f"bought for storage: {max_chargeable:.3f}J @ {buy_price:.2f}")
+            should_sell, sell_amount = calculate_optimal_sell_decision(
+                row, storage, storage_target, price_history, total_power_demand
+            )
+            if should_sell and sell_amount > 0.05:
+                sell_amount = min(sell_amount, storage)
+                energy_sold = sell_amount * DISCHARGE_EFFICIENCY
+                storage -= sell_amount
+                profit += energy_sold * sell_price
+                tick_actions.append(f"sold from storage: {sell_amount:.3f}J @ {sell_price:.2f}")
+            if total_power_demand > 0:
+                optimal_storage_use, grid_purchase = optimise_demand_fulfillment(
+                    total_power_demand, storage, buy_price, sell_price
+                )
+                if optimal_storage_use > 0.01:
+                    actual_energy_delivered = optimal_storage_use * DISCHARGE_EFFICIENCY
+                    storage -= optimal_storage_use
+                    tick_actions.append(f"discharged to meet demand: {optimal_storage_use:.3f}J")
+                    remaining_demand = total_power_demand - actual_energy_delivered
+                else:
+                    remaining_demand = total_power_demand
+                # Always log grid use if any remaining demand (even very small)
+                if remaining_demand > 0.0:
+                    cost = remaining_demand * buy_price
+                    profit -= cost
+                    tick_actions.append(f"grid used: {remaining_demand:.3f}J")
+            storage = max(MIN_STORAGE, min(storage, MAX_STORAGE))
+            net_flow = storage - initial_storage
+            if abs(net_flow) < 0.01:
+                flow_description = "0"
+            elif net_flow > 0:
+                flow_description = f"charging {net_flow:.2f}j"
+            else:
+                flow_description = f"discharging {abs(net_flow):.2f}j"
+            storage_over_time.append(storage)
+            profit_over_time.append(profit)
+            storage_states.append(flow_description)
+            actions.extend(tick_actions)
+            print(f"Tick {tick}: {flow_description} | Storage: {storage:.2f}J | Profit: {profit:.2f} cents | Actions: {tick_actions}")
+    except KeyboardInterrupt:
+        print("\nStopped by user.")
+        print(f"\nFinal Statistics:")
+        print(f"Total ticks processed: {len(recent_ticks)}")
+        print(f"Final storage: {storage:.2f}J")
+        print(f"Final loss: {profit:.2f} cents")
 
 if __name__ == "__main__":
     main()
