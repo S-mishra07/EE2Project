@@ -153,6 +153,47 @@ export default function App() {
         WebSocket status: {wsStatus} | Last tick: {currentData.tick}
       </div>
 
+      <button 
+  className='text-white bg-gradient-to-r from-teal-400 via-teal-500 to-teal-600 hover:bg-gradient-to-br hover:scale-105 focus:ring-4 focus:outline-none focus:ring-teal-300 dark:focus:ring-teal-800 shadow-lg shadow-teal-500/50 dark:shadow-lg dark:shadow-teal-800/80 font-medium rounded-lg text-sm px-5 py-2.5 text-center me-2 mb-2'
+  onClick={async () => {
+    try {
+      const response = await fetch('http://localhost:3000/set-mode', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ mode: 'mppt' }),
+      });
+      const data = await response.json();
+      console.log(data.message);
+    } catch (error) {
+      console.error('Error setting MPPT mode:', error);
+    }
+  }}
+>
+  mppt
+</button>
+
+<button 
+  className='text-white bg-gradient-to-r from-red-400 via-red-500 to-red-600 hover:bg-gradient-to-br hover:scale-105 focus:ring-4 focus:outline-none focus:ring-red-300 dark:focus:ring-red-800 shadow-lg shadow-red-500/50 dark:shadow-lg dark:shadow-red-800/80 font-medium rounded-lg text-sm px-5 py-2.5 text-center me-2 mb-2'
+  onClick={async () => {
+    try {
+      const response = await fetch('http://localhost:3000/set-mode', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ mode: 'normal' }),
+      });
+      const data = await response.json();
+      console.log(data.message);
+    } catch (error) {
+      console.error('Error setting normal mode:', error);
+    }
+  }}
+>
+  normal
+</button>
       <div className="bg-white p-6 rounded-xl shadow-md mb-8">
         <h2 className="text-xl font-semibold mb-4">Yesterday's Price History</h2>
         <div className="h-96">

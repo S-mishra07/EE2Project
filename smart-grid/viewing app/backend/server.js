@@ -1,209 +1,201 @@
-import { useEffect, useState, useRef } from 'react';
-import { Sun, DollarSign, Activity, Battery } from 'lucide-react';
-import { Chart, LineController, LineElement, PointElement, LinearScale, CategoryScale } from 'chart.js';
+import express from 'express';
+import mongoose from 'mongoose';
+import cors from 'cors';
+import { mongodburl } from './config.js';
+import Job from './models/jobmodel.js';
+import { WebSocketServer } from 'ws';
 
-Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale);
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-export default function App() {
-  const [currentData, setCurrentData] = useState(null);
-  const [picoData, setPicoData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [wsStatus, setWsStatus] = useState('disconnected');
-  const chartRef = useRef(null);
+const server = app.listen(3000, () => console.log('Server running on port 3000'));
+const wss = new WebSocketServer({ server });
 
-  const moneyTotalRef = useRef(0); // running total
-  const [moneyTotal, setMoneyTotal] = useState(0); // display value
+let changeStreamCombinedTicks;
+let changeStreamPicoMessages;
+let changeStreamMode;
 
-  useEffect(() => {
-    const fetchLatest = async () => {
-      try {
-        const res = await fetch('http://localhost:3000/latest');
-        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-        const data = await res.json();
-        setCurrentData(data);
-        setLoading(false);
-      } catch (error) {
-        console.error('Fetch error:', error);
-        setLoading(false);
+// Track last tick values for each collection
+let lastCombinedTicksTick = null;
+let lastPicoMessagesTick = null;
+
+async function startChangeStreams() {
+  await mongoose.connect(mongodburl);
+  console.log('Connected to MongoDB');
+
+  // Combined ticks change stream
+  const combinedTicksCollection = mongoose.connection.client.db('test').collection('combined_ticks');
+  changeStreamCombinedTicks = combinedTicksCollection.watch([], { fullDocument: 'updateLookup' });
+
+  changeStreamCombinedTicks.on('change', (change) => {
+    if (change.operationType === 'insert') {
+      const newData = change.fullDocument;
+
+      // Skip if tick hasn't changed
+      if (lastCombinedTicksTick !== null && newData.tick === lastCombinedTicksTick) {
+        console.log(`Skipping combined_ticks update - same tick (${newData.tick})`);
+        return;
       }
-    };
+      
+      lastCombinedTicksTick = newData.tick;
 
-    fetchLatest();
+      const transformedData = {
+        type: 'combined_ticks',
+        tick: newData.tick,
+        timestamp: newData.timestamp || Date.now(),
+        sun: newData.sun?.sun ?? 0,
+        price: {
+          buy: newData.prices?.buy_price ?? 0,
+          sell: newData.prices?.sell_price ?? 0,
+          day: newData.prices?.day ?? 0
+        },
+        demand: newData.demand?.demand ?? 0,
+        deferrable: Array.isArray(newData.deferrable) ? newData.deferrable : [],
+        yesterday: Array.isArray(newData.yesterday) ? newData.yesterday : []
+      };
 
-    const ws = new WebSocket('ws://localhost:3000');
+      broadcastToClients(transformedData);
+    }
+  });
 
-    ws.onopen = () => {
-      console.log("WebSocket connected");
-      setWsStatus('connected');
-    };
+  changeStreamCombinedTicks.on('error', (err) => {
+    console.error('Change stream combined_ticks error:', err);
+  });
 
-    ws.onmessage = (event) => {
-      try {
-        const newData = JSON.parse(event.data);
-        console.log('WS message received:', newData);
-        if (newData.type === 'combined_ticks') {
-          setCurrentData(newData);
-        } else if (newData.type === 'pico_messages') {
-          setPicoData(newData);
+  // Pico messages change stream
+  const picoMessagesCollection = mongoose.connection.client.db('test_pico').collection('pico_messages');
+  changeStreamPicoMessages = picoMessagesCollection.watch([], { fullDocument: 'updateLookup' });
 
-          // Update running total:
-          const moneyValue = newData.money ?? 0;
-          moneyTotalRef.current += moneyValue;
-          setMoneyTotal(moneyTotalRef.current);
-        }
-      } catch (e) {
-        console.error("WS parse error:", e);
+  changeStreamPicoMessages.on('change', (change) => {
+    if (change.operationType === 'insert') {
+      const newData = change.fullDocument;
+
+      // Skip if tick hasn't changed
+      if (lastPicoMessagesTick !== null && newData.tick === lastPicoMessagesTick) {
+        console.log(`Skipping pico_messages update - same tick (${newData.tick})`);
+        return;
       }
-    };
+      
+      lastPicoMessagesTick = newData.tick;
 
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      setWsStatus('error');
-    };
+      const transformedData = {
+        type: 'pico_messages',
+        tick: newData.tick ?? 0,
+        Vin: newData.Vin ?? '-',
+        Vout: newData.Vout ?? '-',
+        Iout: newData.Iout ?? '-',
+        power: newData.power ?? 0,
+        money: newData.money ?? 0,
+        timestamp: newData.timestamp || Date.now()
+      };
 
-    ws.onclose = () => {
-      console.log("WebSocket disconnected");
-      setWsStatus('disconnected');
-    };
+      broadcastToClients(transformedData);
+    }
+  });
 
-    return () => {
-      ws.close();
-    };
-  }, []);
+  changeStreamPicoMessages.on('error', (err) => {
+    console.error('Change stream pico_messages error:', err);
+  });
 
-  useEffect(() => {
-    if (!currentData?.yesterday) return;
+  // Mode change stream
+  const modeCollection = mongoose.connection.client.db('test_pico').collection('mode');
+  changeStreamMode = modeCollection.watch([], { fullDocument: 'updateLookup' });
 
-    const canvas = document.getElementById('priceChart');
-    if (!canvas) return;
+  changeStreamMode.on('change', (change) => {
+    if (change.operationType === 'insert') {
+      const newData = change.fullDocument;
+      const transformedData = {
+        type: 'mode_change',
+        mode: newData.mode,
+        timestamp: newData.timestamp || Date.now()
+      };
+      broadcastToClients(transformedData);
+    }
+  });
 
-    const ctx = canvas.getContext('2d');
+  changeStreamMode.on('error', (err) => {
+    console.error('Change stream mode error:', err);
+  });
+}
 
-    if (chartRef.current) {
-      chartRef.current.destroy();
+function broadcastToClients(data) {
+  wss.clients.forEach(client => {
+    if (client.readyState === 1) {
+      client.send(JSON.stringify(data));
+    }
+  });
+}
+
+// New endpoint to handle mode selection
+app.post('/set-mode', async (req, res) => {
+  try {
+    const { mode } = req.body;
+    
+    if (!mode || (mode !== 'mppt' && mode !== 'normal')) {
+      return res.status(400).json({ error: 'Invalid mode. Must be "mppt" or "normal"' });
     }
 
-    const labels = currentData.yesterday.map((_, index) => `Tick ${index}`);
-    const buyPrices = currentData.yesterday.map(item => item.buy_price ?? 0);
-    const sellPrices = currentData.yesterday.map(item => item.sell_price ?? 0);
-
-    chartRef.current = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels,
-        datasets: [
-          {
-            label: 'Buy Price',
-            data: buyPrices,
-            borderColor: 'rgb(75, 192, 192)',
-            tension: 0.1
-          },
-          {
-            label: 'Sell Price',
-            data: sellPrices,
-            borderColor: 'rgb(255, 99, 132)',
-            tension: 0.1
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        plugins: {
-          title: {
-            display: true,
-            text: "Yesterday's Prices"
-          },
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            title: {
-              display: true,
-              text: 'Price ($)'
-            }
-          },
-          x: {
-            title: {
-              display: true,
-              text: 'Time (Tick)'
-            }
-          }
-        }
-      }
+    const modeCollection = mongoose.connection.client.db('test_pico').collection('mode');
+    await modeCollection.insertOne({
+      mode,
+      timestamp: Date.now()
     });
 
-    return () => {
-      if (chartRef.current) {
-        chartRef.current.destroy();
-      }
+    res.status(200).json({ message: `Mode set to ${mode}` });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// New endpoint to get current mode
+app.get('/current-mode', async (req, res) => {
+  try {
+    const modeCollection = mongoose.connection.client.db('test_pico').collection('mode');
+    const currentMode = await modeCollection.findOne({}, { sort: { $natural: -1 } });
+    
+    res.status(200).json(currentMode || { mode: 'not_set' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Existing endpoints
+app.get('/latest', async (req, res) => {
+  try {
+    const latest = await Job.findOne().sort({ $natural: -1 });
+    if (!latest) return res.status(404).json({ message: 'No data found' });
+
+    const transformedData = {
+      tick: latest.tick,
+      timestamp: latest.timestamp || Date.now(),
+      sun: latest.sun?.sun ?? 0,
+      price: {
+        buy: latest.prices?.buy_price ?? 0,
+        sell: latest.prices?.sell_price ?? 0,
+        day: latest.prices?.day ?? 0
+      },
+      demand: latest.demand?.demand ?? 0,
+      deferrable: Array.isArray(latest.deferrable) ? latest.deferrable : [],
+      yesterday: Array.isArray(latest.yesterday) ? latest.yesterday : []
     };
-  }, [currentData]);
 
-  if (loading) return <div className="p-8">Loading initial data...</div>;
-  if (!currentData) return <div className="p-8">No data available</div>;
+    res.json(transformedData);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-  const totalDeferrableEnergy = (currentData.deferrable || []).reduce(
-    (sum, device) => sum + (device.energy || 0), 0
-  );
+wss.on('connection', (ws) => {
+  console.log('New WebSocket connection');
 
-  return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <h1 className="text-3xl font-bold mb-8">Smart Grid Dashboard</h1>
-      <div className="mb-4 text-sm text-gray-600">
-        WebSocket status: {wsStatus} | Last tick: {currentData.tick}
-      </div>
+  ws.on('error', (err) => {
+    console.error('WebSocket error:', err);
+  });
 
-      <div className="bg-white p-6 rounded-xl shadow-md mb-8">
-        <h2 className="text-xl font-semibold mb-4">Yesterday's Price History</h2>
-        <div className="h-96">
-          <canvas id="priceChart"></canvas>
-        </div>
-      </div>
+  ws.on('close', () => {
+    console.log('WebSocket disconnected');
+  });
+});
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-        <DataCard icon={<Sun className="text-yellow-500" />} title="Sunshine" value={currentData.sun} unit="%" />
-        <DataCard icon={<DollarSign className="text-green-500" />} title="Buy Price" value={currentData.price?.buy} unit="$" />
-        <DataCard icon={<DollarSign className="text-blue-500" />} title="Sell Price" value={currentData.price?.sell} unit="$" />
-        <DataCard icon={<Activity className="text-purple-500" />} title="Demand" value={(currentData.demand ?? 0).toFixed(2)} unit="kW" />
-        <DataCard icon={<Battery className="text-orange-500" />} title="Deferrable Load" value={totalDeferrableEnergy.toFixed(2)} unit="kW" />
-        <div className="bg-white p-6 rounded-xl shadow-md">
-          <h3 className="text-lg font-semibold mb-2">Current Tick</h3>
-          <p className="text-2xl font-bold">{currentData.tick}</p>
-          <p className="text-sm text-gray-500 mt-2">
-            Updated: {new Date(currentData.timestamp).toLocaleTimeString()}
-          </p>
-        </div>
-      </div>
-
-      {picoData && (
-        <div className="bg-white p-6 rounded-xl shadow-md">
-          <h2 className="text-xl font-semibold mb-4">Pico Messages Data</h2>
-          <div className="grid grid-cols-2 gap-4 text-lg">
-            <div><strong>Tick:</strong> {picoData.tick}</div>
-            <div><strong>Vin:</strong> {picoData.Vin}</div>
-            <div><strong>Vout:</strong> {picoData.Vout}</div>
-            <div><strong>Iout:</strong> {picoData.Iout}</div>
-            <div><strong>Power:</strong> {(picoData.power ?? 0).toFixed(3)} W</div>
-            <div><strong>Money (latest message):</strong> ${(picoData.money ?? 0).toFixed(2)}</div>
-            <div><strong>Money (running total):</strong> ${moneyTotal.toFixed(2)}</div>
-            <div><strong>Timestamp:</strong> {new Date(picoData.timestamp).toLocaleString()}</div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DataCard({ icon, title, value, unit }) {
-  return (
-    <div className="bg-white p-6 rounded-xl shadow-md">
-      <div className="flex items-center gap-3 mb-4">
-        {icon}
-        <h3 className="text-lg font-semibold">{title}</h3>
-      </div>
-      <p className="text-2xl font-bold">
-        {value} {unit && <span className="text-sm font-normal">{unit}</span>}
-      </p>
-    </div>
-  );
-}
+startChangeStreams().catch(console.error);
