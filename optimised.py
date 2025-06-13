@@ -14,6 +14,11 @@ import warnings
 
 warnings.filterwarnings("ignore", category=RuntimeWarning, message="Mean of empty slice")
 
+broker = "192.168.72.115"  # change this to AWS ip eventually
+port = 1883
+client_id = "naive"
+topic_to_pico = "algorithm_data"
+
 mongo_url = "mongodb+srv://akarshgopalam:bharadwaj@smart-grid.wnctwen.mongodb.net/test?retryWrites=true&w=majority&appName=smart-grid"
 client = MongoClient(mongo_url)
 db = client["test"]
@@ -31,7 +36,7 @@ CHARGE_EFFICIENCY = 0.8
 DISCHARGE_EFFICIENCY = 0.8
 STORAGE_DECAY = 0.9995
 
-MAX_CHARGE_RATE = 7.25
+MAX_CHARGE_RATE = 10
 
 def fetch_data():
     BASE_URL = "https://icelec50015.azurewebsites.net" 
@@ -268,11 +273,13 @@ def ultra_loss_minimizing_algorithm(df, defer_df, window=20):
     storage = 0.0
     actions = []
     profit = 0
+    grid_selling_profit = 0  # Track profit specifically from selling to grid
     profit_over_time = []
     storage_over_time = []
     storage_states = []
     energy_purchases = [] 
     charging_events = []
+    grid_sales = []  # Track all grid sales
     scheduled_deferrals = ultra_advanced_defer_optimisation(defer_df, df)
     defer_lookup = {}
     for defer_item in scheduled_deferrals:
@@ -345,8 +352,16 @@ def ultra_loss_minimizing_algorithm(df, defer_df, window=20):
             sell_amount = min(sell_amount, storage)
             energy_sold = sell_amount * DISCHARGE_EFFICIENCY
             storage -= sell_amount
-            profit += energy_sold * sell_price
+            sale_profit = energy_sold * sell_price
+            profit += sale_profit
+            grid_selling_profit += sale_profit  # Track grid selling profit
             actions.append(f"sold from storage: {sell_amount:.3f}J @ {sell_price:.2f}")
+            grid_sales.append({
+                'tick': tick,
+                'energy_sold': energy_sold,
+                'price': sell_price,
+                'profit': sale_profit
+            })
         if total_power_demand > 0 and 'optimise_demand_fulfillment' in globals():
             optimal_storage_use, grid_purchase = optimise_demand_fulfillment(
                 total_power_demand, storage, buy_price, sell_price
@@ -384,6 +399,26 @@ def ultra_loss_minimizing_algorithm(df, defer_df, window=20):
         storage_states.append(state)
         print(f"Tick {tick}: Storage at END of tick {storage:.2f}J ({state}, {storage_change:.3f}J)")
     print(f"\nAlgorithm complete! Final storage: {storage:.2f}J")
+    print("\n" + "="*60)
+    print("GRID SELLING SUMMARY")
+    print("="*60)
+    if grid_sales:
+        total_energy_sold = sum(sale['energy_sold'] for sale in grid_sales)
+        print(f"Total Energy Sold to Grid: {total_energy_sold:.2f}J")
+        print(f"Total Grid Selling Profit: ${grid_selling_profit:.2f}")
+        print(f"Average Selling Price: ${grid_selling_profit/total_energy_sold:.2f}/J")
+        
+        # Daily stats if we have enough data
+        if len(grid_sales) > 0:
+            ticks_per_day = 24 * 60 * 60 / 5  # Assuming 5-second ticks
+            days = (grid_sales[-1]['tick'] - grid_sales[0]['tick']) / ticks_per_day
+            if days > 0:
+                print(f"\nDaily Averages:")
+                print(f"Energy Sold per Day: {total_energy_sold/max(1,days):.2f}J")
+                print(f"Profit per Day: ${grid_selling_profit/max(1,days):.2f}")
+    else:
+        print("No energy sold to grid during this period.")
+    
     print("\n" + "="*60)
     print("CAPACITOR CHARGING EVENTS")
     print("="*60)
@@ -459,8 +494,13 @@ def calculate_optimal_sell_decision(row, current_storage, storage_target, price_
     sell_price = row['sell_price']
     buy_price = row['buy_price']
     excess_storage = current_storage - storage_target
-    if excess_storage <= 0:
+    
+    # Even more aggressive selling - lower storage threshold
+    if current_storage > storage_target * 0.6:  # Lowered further from 0.7
+        excess_storage = current_storage - (storage_target * 0.6)
+    else:
         return False, 0
+
     spread = sell_price - buy_price
     spread_ma = row.get('spread_ma', spread)
     spread_attractiveness = max(0, (spread - spread_ma) / max(spread_ma, 0.1))
@@ -470,20 +510,26 @@ def calculate_optimal_sell_decision(row, current_storage, storage_target, price_
     price_premium = max(0, (sell_price - price_ma) / max(price_ma, 0.01))
     sun = row.get('sun', 0)
     solar_competition = max(0, (100 - sun) / 100)
+    
+    # More aggressive scoring with higher weights on favorable conditions
     sell_score = (
-        min(excess_storage / (MAX_STORAGE * 0.2), 2.0) * 0.35 +
-        spread_attractiveness * 0.25 +
-        forecast_disadvantage * 0.20 +
-        price_premium * 0.15 +
+        min(excess_storage / (MAX_STORAGE * 0.12), 2.0) * 0.40 +  # Increased weight, lowered threshold
+        spread_attractiveness * 0.35 +  # Further increased
+        forecast_disadvantage * 0.10 +  # Further reduced
+        price_premium * 0.10 +  # Reduced to emphasize spread
         solar_competition * 0.05
     )
-    should_sell = sell_score > 0 and spread > 1.5
+
+    # Even lower threshold for selling
+    should_sell = sell_score > 0 and spread > 0.8  # Further lowered from 1.0
+
     if should_sell:
-        max_sellable = min(excess_storage * 0.6, 8.0)
-        if sell_score > 1.5:
-            sell_amount = max_sellable * 0.8
+        # More aggressive selling amounts
+        max_sellable = min(excess_storage * 0.9, MAX_CHARGE_RATE)  # Increased from 0.8
+        if sell_score > 1.0:  # Lowered threshold further
+            sell_amount = max_sellable * 0.95  # Increased from 0.9
         else:
-            sell_amount = max_sellable * 0.5
+            sell_amount = max_sellable * 0.8  # Increased from 0.7
         return True, sell_amount
     return False, 0
 
@@ -511,6 +557,7 @@ def main():
     last_processed_id = None
     storage = 0.0
     profit = 0.0
+    grid_selling_profit = 0.0  # Initialize grid selling profit tracking
     actions = []
     storage_over_time = []
     profit_over_time = []
@@ -519,6 +566,7 @@ def main():
     recent_ticks = []
     energy_purchases = []
     charging_events = []
+    grid_sales = []  # Track all grid sales
     scheduled_deferrals = None
     defer_lookup = {}
     try:
@@ -542,6 +590,7 @@ def main():
                 demand = float(demand_raw.get('demand', 0))
             else:
                 demand = float(demand_raw) if demand_raw else 0
+            demand = demand * 5  # Convert from W to J per tick (5 seconds)
             prices_raw = doc.get('prices', {})
             if isinstance(prices_raw, dict):
                 sell_price = float(prices_raw.get('sell_price', 0))
@@ -686,8 +735,16 @@ def main():
                 sell_amount = min(sell_amount, storage)
                 energy_sold = sell_amount * DISCHARGE_EFFICIENCY
                 storage -= sell_amount
-                profit += energy_sold * sell_price
+                sale_profit = energy_sold * sell_price
+                profit += sale_profit
+                grid_selling_profit += sale_profit  # Track grid selling profit
                 tick_actions.append(f"sold from storage: {sell_amount:.3f}J @ {sell_price:.2f}")
+                grid_sales.append({
+                    'tick': tick,
+                    'energy_sold': energy_sold,
+                    'price': sell_price,
+                    'profit': sale_profit
+                })
             if total_power_demand > 0:
                 optimal_storage_use, grid_purchase = optimise_demand_fulfillment(
                     total_power_demand, storage, buy_price, sell_price
@@ -745,7 +802,41 @@ def main():
         print(f"\nFinal Statistics:")
         print(f"Total ticks processed: {len(recent_ticks)}")
         print(f"Final storage: {storage:.2f}J")
-        print(f"Final loss: {profit:.2f} cents")
+        print(f"Total profit/loss: ${profit:.2f}")
+        
+        # Grid selling statistics
+        print("\n" + "="*60)
+        print("GRID SELLING SUMMARY")
+        print("="*60)
+        if grid_sales:
+            total_energy_sold = sum(sale['energy_sold'] for sale in grid_sales)
+            total_profit = sum(sale['profit'] for sale in grid_sales)
+            avg_price = total_profit / total_energy_sold if total_energy_sold > 0 else 0
+            
+            print(f"Total Energy Sold to Grid: {total_energy_sold:.2f}J")
+            print(f"Total Grid Selling Profit: ${total_profit:.2f}")
+            print(f"Average Selling Price: ${avg_price:.3f}/J")
+            
+            if len(grid_sales) > 1:
+                # Time-based statistics
+                first_tick = grid_sales[0]['tick']
+                last_tick = grid_sales[-1]['tick']
+                total_ticks = last_tick - first_tick + 1
+                hours = (total_ticks * 5) / 3600  # Convert ticks (5 seconds each) to hours
+                
+                print(f"\nTime-based Analysis:")
+                print(f"Operating Period: {hours:.1f} hours")
+                print(f"Average Energy Sold per Hour: {total_energy_sold/hours:.2f}J")
+                print(f"Average Profit per Hour: ${total_profit/hours:.2f}")
+                
+                # Sale frequency analysis
+                num_sales = len(grid_sales)
+                sales_per_hour = num_sales / hours
+                print(f"\nSale Frequency:")
+                print(f"Total Number of Sales: {num_sales}")
+                print(f"Average Sales per Hour: {sales_per_hour:.1f}")
+        else:
+            print("No energy was sold to the grid during this period.")
 
 if __name__ == "__main__":
     main()

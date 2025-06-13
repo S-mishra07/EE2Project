@@ -68,6 +68,7 @@ def get_latest_tick_data():
                 demand = float(demand_raw.get('demand', 0))
             else:
                 demand = float(demand_raw) if demand_raw else 0
+            demand = demand * 5  # Convert from W to J per tick (5 seconds)
             
             prices_raw = latest_data.get('prices', {})
             if isinstance(prices_raw, dict):
@@ -253,6 +254,7 @@ def run_historical_analysis():
         for data in historical_data:
             tick = data.get('tick', 0)
             demand = data.get('demand', 0)
+            demand = demand * 5  # Convert from W to J per tick (5 seconds)
             prices = data.get('prices', {})
             sell_price = prices.get('sell_price', 0)
             
