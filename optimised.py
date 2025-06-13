@@ -11,18 +11,22 @@ import json
 from bson.objectid import ObjectId
 import time
 import warnings
+import paho.mqtt.client as mqtt
 
 warnings.filterwarnings("ignore", category=RuntimeWarning, message="Mean of empty slice")
 
-broker = "192.168.72.115"  # change this to AWS ip eventually
+broker = "192.168.72.60"
 port = 1883
-client_id = "naive"
+client_id = "optimised"
 topic_to_pico = "algorithm_data"
 
 mongo_url = "mongodb+srv://akarshgopalam:bharadwaj@smart-grid.wnctwen.mongodb.net/test?retryWrites=true&w=majority&appName=smart-grid"
 client = MongoClient(mongo_url)
 db = client["test"]
 collection = db["combined_ticks"]
+
+mqttc = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311)
+mqttc.connect(broker, port, keepalive=60)
 
 MAX_STORAGE = 50
 MIN_STORAGE = 0
@@ -791,12 +795,19 @@ def main():
             # Calculate charge/discharge delta
             cap_delta = storage - initial_storage
             if cap_delta > 0.0001:
-                cap_status = f"charging {cap_delta:.3f}J"
+                cap_status = f"charging {cap_delta:.3f}j"
             elif cap_delta < -0.0001:
-                cap_status = f"discharging {cap_delta:.3f}J"
+                cap_status = f"discharging {cap_delta:.3f}j"
             else:
                 cap_status = "0"
             print(cap_status)
+
+            try:
+                mqttc.publish(topic_to_pico, cap_status)
+                print(f"Sent to pico: {cap_status}")
+            except Exception as e:
+                print(f"MQTT publish error: {e}")
+
     except KeyboardInterrupt:
         print("\nStopped by user.")
         print(f"\nFinal Statistics:")
@@ -837,6 +848,7 @@ def main():
                 print(f"Average Sales per Hour: {sales_per_hour:.1f}")
         else:
             print("No energy was sold to the grid during this period.")
+        
 
 if __name__ == "__main__":
     main()

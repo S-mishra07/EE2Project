@@ -176,10 +176,11 @@ mqttc = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311)
 mqttc.on_connect = on_connect
 mqttc.on_message = on_message
 mqttc.connect(broker, port, keepalive=60)
-stop_event = threading.Event()
 
-def publish_to_pico():
-    while not stop_event.is_set():
+mqttc.loop_start()
+
+try:
+    while True:
         data_to_led = collection_to_pico.find_one(sort=[("_id", -1)], projection={"demand": 1, "_id": 0})
         payload_to_led = json.dumps(data_to_led)
         data_to_PV = collection_to_pico.find_one(sort=[("_id", -1)], projection={"sun": 1, "_id": 0})
@@ -190,17 +191,7 @@ def publish_to_pico():
         print(f"sent to PV: {payload_to_PV}")
         time.sleep(5)
 
-mqttc.loop_start()
-publisher_thread = threading.Thread(target=publish_to_pico)
-publisher_thread.start()
-
-
-try:
-    while True:
-        time.sleep(1)
 except KeyboardInterrupt:
     print("Stopping...")
-    stop_event.set()
-    publisher_thread.join()
     mqttc.loop_stop()
     print("Clean exit")
