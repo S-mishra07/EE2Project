@@ -100,7 +100,6 @@ def schedule_deferables_smartly(defer_df, current_tick, buy_price, price_history
     
     print(f"Price analysis: Current={buy_price:.2f}¢, Avg={avg_price:.2f}¢, Percentile={price_percentile:.1%}")
     
-    # Filter out expired tasks (they're already missed, don't waste money)
     valid_tasks = []
     for _, task in defer_df.iterrows():
         start = task['start']
@@ -109,7 +108,6 @@ def schedule_deferables_smartly(defer_df, current_tick, buy_price, price_history
         
         print(f"\nTask: Start={start}, End={end}, Demand={demand}J")
         
-        # Skip tasks that are already expired (past deadline)
         if current_tick > end:
             print(f"=> SKIPPING: Task expired (deadline was {end})")
             continue
@@ -120,23 +118,19 @@ def schedule_deferables_smartly(defer_df, current_tick, buy_price, price_history
         print("No valid tasks to schedule")
         return []
     
-    # Sort tasks by urgency (deadline approaching) and size
     valid_tasks.sort(key=lambda x: (x['end'] - current_tick, -x['demand']))
     
-    # Schedule tasks based on priority and available resources
     total_scheduled = 0
     for task in valid_tasks:
         start = task['start']
         end = task['end']
         demand = task['demand']
         remaining_ticks = end - current_tick
-        
-        # Skip if not in execution window yet
+
         if current_tick < start:
             print(f"Task {demand:.1f}J: Not in window yet (starts at {start})")
             continue
             
-        # CRITICAL: Must execute at deadline (last tick)
         if current_tick >= end:
             print(f"Task {demand:.1f}J: CRITICAL - At deadline!")
             scheduled.append({
@@ -147,39 +141,32 @@ def schedule_deferables_smartly(defer_df, current_tick, buy_price, price_history
             total_scheduled += demand
             continue
         
-        # Don't schedule too much at once (spread the load)
         if total_scheduled > 60:  # Don't overload the system
             print(f"Task {demand:.1f}J: Deferring to avoid overload (already scheduled {total_scheduled:.1f}J)")
             continue
-            
-        # In execution window - make smart decisions
+
         if start <= current_tick <= end:
             should_execute = False
             reason = ""
             
-            # Execute if running out of time (last 2 ticks)
             if remaining_ticks <= 2:
                 should_execute = True
                 reason = f"time_critical ({remaining_ticks} ticks left)"
             
-            # Execute if price is very good (bottom 30%)
             elif price_percentile <= 0.3:
                 should_execute = True
                 reason = "excellent_price"
-            
-            # Execute if we have good storage and price is decent
+
             elif storage_level > 20 and price_percentile <= 0.5:
                 should_execute = True
                 reason = "good_storage_decent_price"
-            
-            # Execute smaller tasks if price is reasonable
+   
             elif demand <= 25 and price_percentile <= 0.6:
                 should_execute = True
                 reason = "small_task_ok_price"
             
-            # Execute partial amount for large tasks if storage is good
             elif demand > 40 and storage_level > 30 and price_percentile <= 0.7:
-                partial_demand = min(demand * 0.4, 20)  # Execute 40% or max 20J
+                partial_demand = min(demand * 0.4, 20)
                 scheduled.append({
                     'tick': current_tick,
                     'demand': partial_demand,
@@ -208,11 +195,7 @@ def schedule_deferables_smartly(defer_df, current_tick, buy_price, price_history
     return scheduled
 
 def main():
-    print("Starting AGGRESSIVE ARBITRAGE energy trading system:")
-    print("- FULL utilization of 50J storage capacity")
-    print("- Charge HARD during cheap periods")
-    print("- Sell HARD during expensive periods") 
-    print("- Aggressive deferable scheduling")
+    print("Starting energy trading system:")
     
     storage = 0.0
     profit = 0.0
@@ -260,7 +243,7 @@ def main():
                 'sun': sun,
                 'demand': demand
             })
-            if len(price_history) > 30:  # Keep more history for better decisions
+            if len(price_history) > 30: 
                 price_history.pop(0)
             
             # Calculate AGGRESSIVE price statistics
@@ -301,7 +284,7 @@ def main():
                 storage += solar_charge
                 solar_harvested += solar_charge
                 if solar_charge > 0:
-                    actions_taken.append(f"⚡ SOLAR: +{solar_charge:.2f}J (available: {solar_energy:.2f}J)")
+                    actions_taken.append(f"SOLAR: +{solar_charge:.2f}J (available: {solar_energy:.2f}J)")
             
             # ACTION 2: AGGRESSIVE SELLING STRATEGY
             # Sell aggressively when:
@@ -352,7 +335,7 @@ def main():
                                 "end_solar" if end_of_solar else \
                                 "above_avg" if sell_price > avg_sell else "decent_price"
                         
-                        actions_taken.append(f"💰 AGGRESSIVE SELL: {sell_amount:.2f}J @ {sell_price:.2f}¢/J = ${revenue:.2f} ({reason})")
+                        actions_taken.append(f"SELL: {sell_amount:.2f}J @ {sell_price:.2f}¢/J = ${revenue:.2f} ({reason})")
             
             # ACTION 3: Handle scheduled deferrables
             deferred_demand = 0
@@ -372,9 +355,9 @@ def main():
                         cost = remaining * buy_price / 100
                         profit -= cost
                         total_bought += remaining
-                        actions_taken.append(f"🔧 DEFERRABLES: {deferred_demand:.2f}J (storage: {used_from_storage:.2f}J, grid: {remaining:.2f}J @ {buy_price:.2f}¢ = ${cost:.2f})")
+                        actions_taken.append(f"DEFERRABLES: {deferred_demand:.2f}J (storage: {used_from_storage:.2f}J, grid: {remaining:.2f}J @ {buy_price:.2f}¢ = ${cost:.2f})")
                     else:
-                        actions_taken.append(f"🔧 DEFERRABLES: {deferred_demand:.2f}J (all from storage)")
+                        actions_taken.append(f"DEFERRABLES: {deferred_demand:.2f}J (all from storage)")
                 
                 del my_deferable_schedule[tick]
             
@@ -389,9 +372,9 @@ def main():
                     cost = remaining * buy_price / 100
                     profit -= cost
                     total_bought += remaining
-                    actions_taken.append(f"🏠 DEMAND: {demand:.2f}J (storage: {used_from_storage:.2f}J, grid: {remaining:.2f}J @ {buy_price:.2f}¢ = ${cost:.2f})")
+                    actions_taken.append(f"DEMAND: {demand:.2f}J (storage: {used_from_storage:.2f}J, grid: {remaining:.2f}J @ {buy_price:.2f}¢ = ${cost:.2f})")
                 else:
-                    actions_taken.append(f"🏠 DEMAND: {demand:.2f}J (all from storage)")
+                    actions_taken.append(f"DEMAND: {demand:.2f}J (all from storage)")
             
             # ACTION 5: AGGRESSIVE CHARGING STRATEGY
             # Charge when:
@@ -429,7 +412,7 @@ def main():
                             "very_cheap" if buy_percentile <= 0.2 else \
                             "cheap" if buy_percentile <= 0.4 else "below_avg"
                     
-                    actions_taken.append(f"AGGRESSIVE CHARGE: {target_charge:.2f}J @ {buy_price:.2f}¢ = ${cost:.2f} ({reason}, {buy_percentile:.0%} percentile)")
+                    actions_taken.append(f"CHARGE: {target_charge:.2f}J @ {buy_price:.2f}¢ = ${cost:.2f} ({reason}, {buy_percentile:.0%} percentile)")
             
             # Track maximum storage utilization
             max_storage_used = max(max_storage_used, storage)
@@ -438,7 +421,7 @@ def main():
             storage = max(MIN_STORAGE, min(storage, MAX_STORAGE))
             
             # Print detailed status
-            print(f"\n=== AGGRESSIVE ARBITRAGE - Tick {tick} ===")
+            print(f"\n=== Tick {tick} ===")
             print(f"Sun: {sun}% | Demand: {demand:.2f}J | Deferrables: {deferred_demand:.2f}J")
             print(f"Prices - Buy: {buy_price:.2f}¢/J (avg: {avg_buy:.2f}¢), Sell: {sell_price:.2f}¢/J (avg: {avg_sell:.2f}¢)")
             print(f"Storage: {initial_storage:.2f}J → {storage:.2f}J (change: {storage - initial_storage:+.2f}J) [Max used: {max_storage_used:.1f}J/{MAX_STORAGE}J]")
